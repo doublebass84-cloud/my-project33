@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>횡단보도 안내 시스템 v5.5.1</title>
+    <title>횡단보도 안내 시스템 v6</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
@@ -42,6 +42,7 @@
             overflow: hidden;
             min-height: 0;
         }
+
         #camera-area canvas,
         #camera-area video {
             width: 100%;
@@ -61,7 +62,8 @@
         }
         #roi-label {
             position: absolute;
-            top: -22px; left: 0;
+            top: -22px;
+            left: 0;
             font-size: 11px;
             color: #ffd500;
             font-family: 'JetBrains Mono', monospace;
@@ -71,39 +73,38 @@
             border-radius: 4px;
         }
 
-        /* 신호등 감지 박스 */
-        #tl-box {
+        /* Roboflow 바운딩 박스 오버레이 */
+        #rf-overlay {
             position: absolute;
+            border: 3px solid var(--safe);
             pointer-events: none;
             display: none;
             border-radius: 4px;
-            border: 2px solid rgba(255,255,255,0.5);
-            transition: border-color 0.2s;
+            transition: all 0.3s;
         }
-        #tl-box.green-tl {
-            border-color: var(--safe);
-            box-shadow: 0 0 12px rgba(0,230,118,0.5);
-        }
-        #tl-box.red-tl {
-            border-color: var(--danger);
-            box-shadow: 0 0 12px rgba(255,23,68,0.5);
-        }
-        #tl-box-label {
+        #rf-label {
             position: absolute;
-            bottom: -20px; left: 0;
-            font-size: 10px;
+            top: -24px;
+            left: 0;
+            font-size: 12px;
+            font-weight: 700;
             font-family: 'JetBrains Mono', monospace;
-            background: rgba(0,0,0,0.7);
-            padding: 1px 5px;
-            border-radius: 3px;
             white-space: nowrap;
-            color: #fff;
+            background: rgba(0,0,0,0.7);
+            padding: 2px 8px;
+            border-radius: 4px;
+            color: var(--safe);
         }
+        #rf-overlay.red-signal { border-color: var(--danger); }
+        #rf-overlay.red-signal #rf-label { color: var(--danger); }
+        #rf-overlay.off-signal { border-color: var(--muted); }
+        #rf-overlay.off-signal #rf-label { color: var(--muted); }
 
         /* 디버그 패널 */
         #debug-panel {
             position: absolute;
-            top: 10px; left: 10px;
+            top: 10px;
+            left: 10px;
             background: rgba(5, 10, 14, 0.85);
             border: 1px solid var(--border);
             border-radius: 8px;
@@ -114,14 +115,14 @@
             display: none;
             color: #7ec8e3;
             backdrop-filter: blur(6px);
-            z-index: 10;
         }
         #debug-panel .dv { color: #e8f0f7; }
 
         /* 상태 뱃지 */
         #signal-badge {
             position: absolute;
-            top: 12px; right: 12px;
+            top: 12px;
+            right: 12px;
             padding: 6px 14px;
             border-radius: 20px;
             font-size: 12px;
@@ -131,7 +132,6 @@
             border: 1px solid var(--border);
             letter-spacing: 0.05em;
             transition: all 0.3s;
-            z-index: 10;
         }
 
         /* 로딩 바 */
@@ -147,10 +147,10 @@
         /* 도구 버튼 */
         #toolbar {
             position: absolute;
-            bottom: 12px; right: 10px;
+            bottom: 12px;
+            right: 10px;
             display: flex;
             gap: 6px;
-            z-index: 10;
         }
         .tool-btn {
             background: rgba(5, 10, 14, 0.8);
@@ -249,6 +249,7 @@
             gap: 24px;
             padding: 30px;
         }
+
         .logo { font-size: 3rem; margin-bottom: 4px; }
         #overlay h1 {
             font-size: 1.4rem;
@@ -279,7 +280,6 @@
             box-shadow: 0 0 30px rgba(0, 230, 118, 0.3);
         }
         .btn-start:active { transform: scale(0.96); }
-        label[for="video-input"],
         .btn-secondary {
             padding: 18px 28px;
             font-size: 1rem;
@@ -290,12 +290,22 @@
             background: transparent;
             color: var(--muted);
             cursor: pointer;
-            transition: border-color 0.2s, color 0.2s;
+        }
+        .btn-secondary:hover { border-color: var(--text); color: var(--text); }
+        #video-input { display: none; }
+        label[for="video-input"] {
+            padding: 18px 28px;
+            font-size: 1rem;
+            font-weight: 700;
+            font-family: 'Noto Sans KR', sans-serif;
+            border: 2px solid var(--border);
+            border-radius: 50px;
+            background: transparent;
+            color: var(--muted);
+            cursor: pointer;
         }
         label[for="video-input"]:hover { border-color: var(--text); color: var(--text); }
-        #video-input { display: none; }
         .notice { font-size: 0.75rem; color: #2a3a4a; text-align: center; }
-        .version-tag { font-size: 0.7rem; color: #1a2a3a; margin-top: 8px; }
 
         /* 점멸 애니메이션 */
         @keyframes warn-pulse {
@@ -307,50 +317,44 @@
 </head>
 <body>
 
-<!-- ═══ 시작 오버레이 ═══ -->
+<!-- 시작 오버레이 -->
 <div id="overlay">
     <div class="logo">🚦</div>
-    <h1>횡단보도 안내 시스템</h1>
-    <p>시각장애인을 위한 실시간 신호 안내<br>카메라를 신호등 방향으로 향한 후 시작하세요</p>
+    <h1>횡단보도 안내 시스템 v6</h1>
+    <p>시각장애인을 위한 실시간 신호 안내<br>
+       TM 장면분류 + Roboflow 신호등 검출<br>
+       카메라를 신호등 방향으로 향한 후 시작하세요</p>
     <div class="btn-row">
         <button class="btn-start" onclick="startApp('camera')">📷 카메라 시작</button>
         <label for="video-input">🎬 영상 테스트</label>
         <input type="file" id="video-input" accept="video/*" onchange="startApp('video', this)">
     </div>
-    <p class="notice">카메라 · 위치 · 센서 권한이 필요합니다</p>
-    <div class="version-tag">v5.5 — 초록 색조 범위 수정 (H35~170)</div>
+    <p class="notice">카메라 · 위치 권한이 필요합니다</p>
 </div>
 
-<!-- ═══ 카메라 영역 ═══ -->
+<!-- 카메라 영역 -->
 <div id="camera-area">
-    <div id="roi-overlay"><span id="roi-label">OCR 영역 (숫자 인식)</span></div>
-    <div id="tl-box"><span id="tl-box-label">신호등</span></div>
-
+    <div id="roi-overlay"><span id="roi-label">OCR 영역</span></div>
+    <div id="rf-overlay"><span id="rf-label">-</span></div>
     <div id="debug-panel">
         <div>SCENE   <span class="dv" id="d-scene">-</span></div>
-        <div>CONF    <span class="dv" id="d-conf">-</span></div>
-        <div>SCAN    <span class="dv" id="d-tl">-</span></div>
-        <div>COLOR   <span class="dv" id="d-color">-</span></div>
-        <div>TOP5    <span class="dv" id="d-top5">-</span></div>
-        <div>GHUE    <span class="dv" id="d-ghue">-</span></div>
+        <div>SIGNAL  <span class="dv" id="d-signal">-</span></div>
+        <div>RF_CONF <span class="dv" id="d-rfconf">-</span></div>
         <div>OCR     <span class="dv" id="d-ocr">-</span></div>
         <div>BLINK   <span class="dv" id="d-blink">-</span></div>
         <div>WIDTH   <span class="dv" id="d-width">-</span></div>
         <div>SPEED   <span class="dv" id="d-speed">-</span></div>
         <div>CROSS_T <span class="dv" id="d-crosst">-</span></div>
     </div>
-
     <div id="signal-badge">STANDBY</div>
-
     <div id="toolbar">
         <button class="tool-btn" id="btn-debug" onclick="toggleDebug()">디버그</button>
-        <button class="tool-btn" id="btn-roi"   onclick="toggleROI()">OCR영역</button>
-        <button class="tool-btn" id="btn-tl"    onclick="toggleTL()">신호등</button>
+        <button class="tool-btn" id="btn-roi" onclick="toggleROI()">OCR영역</button>
     </div>
     <div id="loading-bar"></div>
 </div>
 
-<!-- ═══ 정보 패널 ═══ -->
+<!-- 정보 패널 -->
 <div id="info-area" onclick="repeatSpeak()" aria-live="assertive" role="status">
     <div id="main-msg">시스템 대기 중</div>
     <div id="sub-msg">터치하면 음성 반복</div>
@@ -376,142 +380,115 @@
 </div>
 
 <script>
-// ════════════════════════════════════════════════════════════
-//  v5.4 — 큰 그리드(8×3) + 피크밀도 방식
-// ════════════════════════════════════════════════════════════
-//  v5.3 → v5.4 변경:
-//    그리드 16×6 → 8×3: 셀을 크게 해서 신호등 LED가 1셀에 집중
-//    초록 명도 78→65%: 밤 신호등도 감지
-//    초록 피크 기준 8→5%: 큰 셀에 맞춤
-//    빨강 명도 70→65%: 동일 기준
-//  유지: 초록=피크밀도, 빨강=집중도+피크대비 비대칭 판정
-// ════════════════════════════════════════════════════════════
-
-// ── CONFIG ──
+// ════════════════════════════════════════════════
+//  CONFIG
+// ════════════════════════════════════════════════
 const TM_MODEL_URL       = "https://teachablemachine.withgoogle.com/models/evw4CriFx/";
+const RF_MODEL_ID        = "signal-detect-instant-1";
+const RF_API_KEY         = "EUwdgTSdDsVFUzryHbkq";
+const RF_API_URL         = `https://detect.roboflow.com/${RF_MODEL_ID}?api_key=${RF_API_KEY}&confidence=40&overlap=30`;
 
-const PREDICT_INTERVAL   = 200;    // TM 예측 주기 (ms)
-const SCAN_INTERVAL      = 400;    // HSV 스캔 주기 (ms)
+const TM_INTERVAL        = 300;    // TM 예측 주기 (ms)
+const RF_INTERVAL        = 1500;   // Roboflow 호출 주기 (ms) — API 속도 고려
 const OCR_INTERVAL       = 1200;   // OCR 실행 주기 (ms)
 
 const CONFIDENCE_MIN     = 0.90;   // TM 최소 신뢰도
-
-const BLINK_WIN          = 24;     // 점멸 감지 윈도우 (프레임)
-const BLINK_VAR_THRESH   = 35;     // 점멸 판단 분산 임계값
-
+const RF_CONFIDENCE_MIN  = 0.40;   // Roboflow 최소 신뢰도
 const SAFETY_BUFFER      = 3;      // 안전 여유 (초)
 const DEFAULT_SPEED      = 1.2;    // 기본 보행속도 (m/s)
 const STRIPE_M           = 1.0;    // 줄무늬 1쌍 = 1m
-const SCENE_VOTE_SIZE    = 8;      // 장면 분류 투표 윈도우 크기
-const COLOR_VOTE_SIZE    = 6;      // 신호 색상 투표 윈도우 크기
-
 const SPEAK_DANGER_WAIT  = 3000;
 const SPEAK_NORMAL_WAIT  = 5000;
-const OCR_STALE_MS       = 4000;   // OCR 값 유효 기간 (ms)
 
-// ── HSV 스캔 설정 ──
-const SCAN_TOP_RATIO     = 0.35;
-const GRID_COLS          = 16;     // v5.2 성공값 복원
-const GRID_ROWS          = 6;      // v5.2 성공값 복원
-const GREEN_HUE_MIN      = 35;     // 밤 LED 과노출 시 H44~77로 찍힘
-const GREEN_HUE_MAX      = 170;
-const RED_HUE_MAX_LOW    = 25;
-const RED_HUE_MIN_HIGH   = 335;
-const SCAN_SAT_MIN       = 18;     // 밤 LED 과노출 시 채도 S20~24로 낮아짐
-const SCAN_BRIGHT_MIN    = 75;     // 빨강용 최소 명도 — v5.2 성공값 복원
-const SCAN_BRIGHT_GREEN  = 65;     // 초록용 최소 명도 — 진단 후 조정 예정
-const CELL_DENSITY_MIN   = 0.03;   // 셀 내 유효 픽셀 비율 최소값 (3%)
-const GREEN_PEAK_MIN     = 0.05;   // 초록 피크 밀도 최소값 (5%)
-const MAX_SPREAD_CELLS   = 3;      // 빨강 최대 허용 셀 수
-const PEAK_TO_AVG_RATIO  = 2.5;    // 빨강 피크 대비 배수
-const COLOR_DOMINANCE    = 1.5;
+// 점멸 감지: 최근 N개 Roboflow 결과에서 green↔off 반복 패턴
+const BLINK_HISTORY_SIZE = 8;      // 최근 8회 Roboflow 결과 보관
+const BLINK_TOGGLE_MIN   = 3;      // green↔off 전환 3회 이상 → 점멸
 
+// TM 장면 확정: 최빈값 투표
+const SCENE_VOTE_SIZE    = 6;
 
-// ── STATE ──
+// ════════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════════
 let tmModel, webcam, maxPredictions;
 let videoEl        = null;
 let isVideoMode    = false;
 
-// 장면 분류 (TM) — 최빈값 투표
-let sceneState     = "unknown";
-let sceneVotes     = [];
+// 장면 상태 (TM)
+let sceneState       = "unknown";
+let sceneVoteBuffer  = [];
 
-// 신호등 색상 (HSV 그리드 스캔) — 최빈값 투표
-let signalColor     = "unknown";   // "green" | "red" | "unknown"
-let colorVotes      = [];
-let signalHotspot   = null;        // {cx, cy, cellW, cellH} 가장 강한 신호 셀 위치
+// 신호 상태 (Roboflow)
+let signalState      = "unknown";   // green / red / off / unknown
+let signalConfidence = 0;
+let rfBbox           = null;        // {x, y, width, height}
+
+// 점멸 감지
+let rfHistory        = [];          // 최근 Roboflow 결과 배열
+let isBlinking       = false;
 
 // OCR
-let ocrTime        = null;
-let ocrTimeStamp   = 0;           // OCR 값이 갱신된 시각
-let isOcrRunning   = false;
-let ocrWorker      = null;
+let ocrTime          = null;
+let ocrWorker        = null;
+let isOcrRunning     = false;
 
-// 점멸
-let isBlinking     = false;
-let blinkBuf       = [];
-
-// 횡단 거리 / 보행 속도
-let estimatedWidth = null;
-let walkSpeed      = DEFAULT_SPEED;
-let speedHistory   = [];
-let lastGpsCoords  = null;
-let lastGpsMs      = null;
+// 횡단 거리 / 보행속도
+let estimatedWidth   = null;
+let walkSpeed        = DEFAULT_SPEED;
+let speedHistory     = [];
+let lastGpsCoords    = null;
+let lastGpsMs        = null;
 
 // UI
-let lastMsg        = "";
-let lastSpeakMs    = 0;
-let lastPredictTs  = 0;
-let lastScanTs     = 0;
-let lastOcrTs      = 0;
+let lastMsg          = "";
+let lastSpeakMs      = 0;
+let lastTmTs         = 0;
+let lastRfTs         = 0;
+let lastOcrTs        = 0;
+let isRfRunning      = false;
 
-let debugOn        = false;
-let roiOn          = false;
-let tlOn           = true;        // 스캔 영역 표시 기본 ON
-let roiRect        = null;
+let debugOn          = false;
+let roiOn            = false;
+let roiRect          = null;
 
 // 오프스크린 캔버스
-const blinkCanvas = document.createElement('canvas');
-const blinkCtx    = blinkCanvas.getContext('2d', { willReadFrequently: true });
-const ocrCanvas   = document.createElement('canvas');
-const ocrCtx      = ocrCanvas.getContext('2d', { willReadFrequently: true });
-const cwCanvas    = document.createElement('canvas');
-const cwCtx       = cwCanvas.getContext('2d', { willReadFrequently: true });
-const colorCanvas = document.createElement('canvas');
-const colorCtx    = colorCanvas.getContext('2d', { willReadFrequently: true });
-
+const ocrCanvas = document.createElement('canvas');
+const ocrCtx    = ocrCanvas.getContext('2d', { willReadFrequently: true });
+const cwCanvas  = document.createElement('canvas');
+const cwCtx     = cwCanvas.getContext('2d', { willReadFrequently: true });
+const rfCanvas  = document.createElement('canvas');
+const rfCtx     = rfCanvas.getContext('2d');
 
 // ════════════════════════════════════════════════
 //  ENTRY POINT
 // ════════════════════════════════════════════════
 async function startApp(mode, fileInput) {
     document.getElementById('overlay').style.display = 'none';
-    setMsg("시스템 초기화 중...", "모델을 로드하고 있습니다");
+    setMsg("시스템 초기화 중...", "잠시만 기다려주세요");
     speak(" ");
 
     try {
-        // 1. 모델 병렬 로드 (v5.2: TM + OCR만, COCO-SSD 제거)
+        // 1. Tesseract
         bar(10);
-        setMsg("초기화 중...", "모델을 로드합니다");
+        try {
+            ocrWorker = await Tesseract.createWorker('eng', 1, { logger: () => {} });
+            await ocrWorker.setParameters({ tessedit_char_whitelist: '0123456789' });
+        } catch (e) {
+            console.warn('OCR 비활성화:', e.message);
+            ocrWorker = null;
+            document.getElementById('s-time').textContent = 'N/A';
+        }
 
-        const ocrPromise = Tesseract.createWorker('eng', 1, { logger: () => {} })
-            .then(async w => { await w.setParameters({ tessedit_char_whitelist: '0123456789' }); return w; })
-            .catch(e => { console.warn('OCR 비활성화:', e.message); return null; });
-
-        const [loadedTM, loadedOcr] = await Promise.all([
-            tmImage.load(TM_MODEL_URL + "model.json", TM_MODEL_URL + "metadata.json"),
-            ocrPromise
-        ]);
-
-        tmModel   = loadedTM;
-        ocrWorker = loadedOcr;
+        // 2. TM 모델
+        bar(40);
+        tmModel = await tmImage.load(TM_MODEL_URL + "model.json", TM_MODEL_URL + "metadata.json");
         maxPredictions = tmModel.getTotalClasses();
 
-        if (!ocrWorker) $('s-time').textContent = 'N/A';
+        // 3. Roboflow — API 방식이라 별도 로드 불필요
+        bar(60);
 
-        // 2. 카메라 또는 비디오
+        // 4. 입력 소스
         bar(70);
-        setMsg("초기화 중...", "카메라 연결");
         if (mode === 'camera') {
             await initCamera();
         } else {
@@ -525,11 +502,8 @@ async function startApp(mode, fileInput) {
         bar(100);
         setTimeout(() => bar(0), 600);
 
-        setMsg("분석 시작", "카메라를 전방으로 향하세요");
+        setMsg("분석 시작", "카메라를 신호등 방향으로 향하세요");
         speak("시스템이 활성화되었습니다.");
-
-        // 신호등 박스 기본 표시
-        document.getElementById('btn-tl').classList.add('active');
 
         requestAnimationFrame(mainLoop);
     } catch (e) {
@@ -564,40 +538,37 @@ async function initVideo(file) {
     });
 }
 
-
 // ════════════════════════════════════════════════
 //  MAIN LOOP
 // ════════════════════════════════════════════════
 async function mainLoop(ts) {
     const src = getSource();
     if (!src) { requestAnimationFrame(mainLoop); return; }
+
     if (!isVideoMode) webcam.update();
 
-    // ① TM: 장면 분류
-    if (ts - lastPredictTs > PREDICT_INTERVAL) {
-        await runPrediction(src);
-        lastPredictTs = ts;
+    // TM: 장면 분류 (crosswalk / surround / background)
+    if (ts - lastTmTs > TM_INTERVAL) {
+        await runTmPrediction(src);
+        lastTmTs = ts;
     }
 
-    // ② HSV 그리드 스캔: 상단 영역에서 신호등 색상 탐지
-    if (ts - lastScanTs > SCAN_INTERVAL) {
-        scanUpperRegion(src);
-        lastScanTs = ts;
+    // Roboflow: 신호등 검출 (green / red / off)
+    if (ts - lastRfTs > RF_INTERVAL) {
+        runRoboflow(src);   // async, non-blocking
+        lastRfTs = ts;
     }
 
-    // ③ OCR: 잔여 시간
+    // OCR: 잔여시간 인식
     if (ts - lastOcrTs > OCR_INTERVAL) {
         runOCR(src);
         lastOcrTs = ts;
     }
 
-    // ④ 점멸 감지 (신호등 bbox 기반)
-    detectBlink(src);
-
-    // ⑤ 횡단 거리 추정
+    // 횡단거리 추정
     estimateCrosswalkWidth(src);
 
-    // ⑥ 안전 판단 + 음성 안내
+    // 최종 판단
     buildDecision();
 
     requestAnimationFrame(mainLoop);
@@ -610,11 +581,10 @@ function getSource() {
     return webcam ? webcam.canvas : null;
 }
 
-
 // ════════════════════════════════════════════════
-//  ① TM 장면 분류 (신호 색상은 담당하지 않음)
+//  TM PREDICTION — 장면 분류만 담당
 // ════════════════════════════════════════════════
-async function runPrediction(src) {
+async function runTmPrediction(src) {
     if (!tmModel) return;
     const preds = await tmModel.predict(src);
 
@@ -623,278 +593,184 @@ async function runPrediction(src) {
         if (p.probability > top.probability) top = p;
     }
 
-    // 기존 5클래스 모델 호환: 신호등 관련 클래스 → crosswalk로 매핑
-    let scene = top.className;
+    const detected = top.probability >= CONFIDENCE_MIN ? top.className : "low_confidence";
+
+    // 장면 분류에서 신호등 클래스 → crosswalk로 매핑 (TM은 장면만 담당)
+    let scene = detected;
     if (scene === "blinker greenlight" || scene === "blinker redlight") {
-        scene = "crosswalk";
-    }
-
-    const detected = top.probability >= CONFIDENCE_MIN ? scene : "low_confidence";
-
-    // v5.1: 최빈값 투표로 장면 확정
-    sceneVotes.push(detected);
-    if (sceneVotes.length > SCENE_VOTE_SIZE) sceneVotes.shift();
-    sceneState = majorityVote(sceneVotes);
-
-    // 뱃지 업데이트
-    const badge = document.getElementById('signal-badge');
-    const sLabel = sceneState.replace('surround crosswalk', 'SURROUND').toUpperCase();
-    const cLabel = signalColor !== "unknown" ? " · " + signalColor.toUpperCase() : "";
-    badge.textContent = sLabel + cLabel;
-
-    if (signalColor === "green") {
-        badge.style.color = 'var(--safe)';
-        badge.style.borderColor = 'var(--safe)';
-    } else if (signalColor === "red") {
-        badge.style.color = 'var(--danger)';
-        badge.style.borderColor = 'var(--danger)';
-    } else {
-        badge.style.color = '';
-        badge.style.borderColor = '';
-    }
-
-    if (debugOn) {
-        $('d-scene').textContent = scene + ' → ' + sceneState + ' (' + sceneVotes.length + '/' + SCENE_VOTE_SIZE + ')';
-        $('d-conf').textContent  = (top.probability * 100).toFixed(1) + '%';
-    }
-}
-
-
-// ════════════════════════════════════════════════
-//  ② 상단 HSV 그리드 스캔 (v5.2: COCO-SSD 대체)
-// ════════════════════════════════════════════════
-// 화면 상단 40%를 10×4 그리드로 나누고,
-// 각 셀에서 밝고 채도 높은 초록/빨강 픽셀 밀도를 계산.
-// 가장 밀도 높은 셀 = 신호등 위치로 추정.
-//
-// v5.2 집중도 필터:
-//   신호등 LED = 1~2개 셀에 집중된 점광원
-//   간판/건물 조명 = 여러 셀에 넓게 퍼짐
-//   → 색상이 퍼진 셀 수가 MAX_SPREAD_CELLS 이상이면 무시
-// ════════════════════════════════════════════════
-function scanUpperRegion(src) {
-    const sw = srcW(src), sh = srcH(src);
-    const scanH = Math.floor(sh * SCAN_TOP_RATIO);
-    if (scanH < 10 || sw < 10) return;
-
-    // 상단 영역 추출
-    colorCanvas.width  = sw;
-    colorCanvas.height = scanH;
-    colorCtx.drawImage(src, 0, 0, sw, scanH, 0, 0, sw, scanH);
-    const imgData = colorCtx.getImageData(0, 0, sw, scanH);
-    const d = imgData.data;
-
-    const cellW = Math.floor(sw / GRID_COLS);
-    const cellH = Math.floor(scanH / GRID_ROWS);
-    const cellPixels = cellW * cellH;
-
-    let bestGreenDensity = 0, bestRedDensity = 0;
-    let bestGreenCell = null, bestRedCell = null;
-    let totalGreen = 0, totalRed = 0;
-    let greenSpread = 0, redSpread = 0;
-
-    // ═══ 진단: 상단 영역에서 가장 밝은 유채색 픽셀 수집 ═══
-    let topPixels = [];  // {h, s, v, r, g, b} 상위 밝기
-    let greenishPixels = 0;  // hue 60~200 범위 픽셀 수 (느슨한 초록)
-    let reddishPixels = 0;   // hue 0~40 또는 320~360 (느슨한 빨강)
-    const SAMPLE_STEP = 4;   // 성능을 위해 4픽셀마다 샘플링
-    for (let i = 0; i < d.length; i += 4 * SAMPLE_STEP) {
-        const R = d[i], G = d[i+1], B = d[i+2];
-        const [h, s, v] = rgbToHsv(R, G, B);
-        if (v > 40 && s > 10) {  // 매우 느슨한 기준
-            if (h >= 60 && h <= 200) greenishPixels++;
-            if (h <= 40 || h >= 320) reddishPixels++;
-        }
-        if (v > 60 && s > 15) {
-            topPixels.push({ h: Math.round(h), s: Math.round(s), v: Math.round(v), R, G, B });
-        }
-    }
-    topPixels.sort((a, b) => b.v - a.v);
-    const top5 = topPixels.slice(0, 5);
-
-    if (debugOn) {
-        $('d-top5').textContent = top5.map(p => 'H' + p.h + ' S' + p.s + ' V' + p.v).join(' | ');
-        $('d-ghue').textContent = '느슨G:' + greenishPixels + ' 느슨R:' + reddishPixels +
-            ' (전체 ' + Math.floor(d.length / 4 / SAMPLE_STEP) + '샘플)';
-    }
-    // ═══ 진단 끝 ═══
-
-    // 그리드 순회
-    for (let row = 0; row < GRID_ROWS; row++) {
-        for (let col = 0; col < GRID_COLS; col++) {
-            const x0 = col * cellW;
-            const y0 = row * cellH;
-            let gCount = 0, rCount = 0;
-
-            for (let y = y0; y < y0 + cellH && y < scanH; y++) {
-                for (let x = x0; x < x0 + cellW && x < sw; x++) {
-                    const idx = (y * sw + x) * 4;
-                    const R = d[idx], G = d[idx+1], B = d[idx+2];
-
-                    const [hue, sat, val] = rgbToHsv(R, G, B);
-
-                    // 채도 기본 필터
-                    if (sat < SCAN_SAT_MIN) continue;
-
-                    // 초록: LED급 밝기만 통과 (나무 제외)
-                    if (val >= SCAN_BRIGHT_GREEN && hue >= GREEN_HUE_MIN && hue <= GREEN_HUE_MAX) {
-                        gCount++;
-                    }
-                    // 빨강: 일반 밝기 기준 (자연에 드물어서)
-                    if (val >= SCAN_BRIGHT_MIN && (hue <= RED_HUE_MAX_LOW || hue >= RED_HUE_MIN_HIGH)) {
-                        rCount++;
-                    }
-                }
-            }
-
-            totalGreen += gCount;
-            totalRed   += rCount;
-
-            const gDensity = gCount / cellPixels;
-            const rDensity = rCount / cellPixels;
-
-            // 집중도 분석: 이 셀에 유의미한 색상이 있는가?
-            if (gDensity >= CELL_DENSITY_MIN) greenSpread++;
-            if (rDensity >= CELL_DENSITY_MIN) redSpread++;
-
-            if (gDensity > bestGreenDensity) {
-                bestGreenDensity = gDensity;
-                bestGreenCell = { col, row, cx: x0 + cellW/2, cy: y0 + cellH/2 };
-            }
-            if (rDensity > bestRedDensity) {
-                bestRedDensity = rDensity;
-                bestRedCell = { col, row, cx: x0 + cellW/2, cy: y0 + cellH/2 };
-            }
-        }
-    }
-
-    // ═══ v5.3: 초록/빨강 비대칭 필터 ═══
-
-    // 초록 판정: 피크 밀도만으로 판단 (분산 무시)
-    // 이유: 나무 초록은 여러 셀에 1~3%씩 퍼지지만,
-    //       신호등 LED는 한 셀에 8~40%가 집중됨.
-    //       높은 명도(78%)로 이미 나무 대부분을 걸렀으므로
-    //       피크 밀도가 높으면 LED로 확신할 수 있음.
-    const greenOK = bestGreenDensity >= GREEN_PEAK_MIN;
-
-    // 빨강 판정: 기존 3중 필터 유지 (집중도 + 피크대비)
-    // 이유: 빨강은 자연에 드물지만 간판/차양이 문제.
-    //       간판은 넓게 퍼지고, 차양은 밀도가 균일함.
-    const redConcentrated = (redSpread >= 1 && redSpread <= MAX_SPREAD_CELLS);
-    const redAvgDensity   = redSpread > 0 ? (totalRed / cellPixels / redSpread) : 0;
-    const redPeakOK       = redAvgDensity > 0
-        ? (bestRedDensity / redAvgDensity >= PEAK_TO_AVG_RATIO)
-        : bestRedDensity >= CELL_DENSITY_MIN;
-    const redOK = bestRedDensity >= CELL_DENSITY_MIN && redConcentrated && redPeakOK;
-
-    let frameColor = "unknown";
-
-    if (greenOK && redOK) {
-        if (totalGreen > totalRed * COLOR_DOMINANCE) {
-            frameColor = "green";
-            signalHotspot = { cx: bestGreenCell.cx, cy: bestGreenCell.cy, cellW, cellH };
-        } else if (totalRed > totalGreen * COLOR_DOMINANCE) {
-            frameColor = "red";
-            signalHotspot = { cx: bestRedCell.cx, cy: bestRedCell.cy, cellW, cellH };
-        }
-    } else if (greenOK) {
-        frameColor = "green";
-        signalHotspot = { cx: bestGreenCell.cx, cy: bestGreenCell.cy, cellW, cellH };
-    } else if (redOK) {
-        frameColor = "red";
-        signalHotspot = { cx: bestRedCell.cx, cy: bestRedCell.cy, cellW, cellH };
-    } else {
-        signalHotspot = null;
+        scene = "crosswalk";  // 신호등 보이면 횡단보도 앞임
     }
 
     // 최빈값 투표
-    colorVotes.push(frameColor);
-    if (colorVotes.length > COLOR_VOTE_SIZE) colorVotes.shift();
-    signalColor = majorityVote(colorVotes);
+    sceneVoteBuffer.push(scene);
+    if (sceneVoteBuffer.length > SCENE_VOTE_SIZE) sceneVoteBuffer.shift();
+    sceneState = majorityVote(sceneVoteBuffer);
 
-    // 오버레이 업데이트
-    updateScanOverlay(src, signalHotspot);
-
-    if (debugOn) {
-        const gInfo = bestGreenDensity >= CELL_DENSITY_MIN
-            ? 'G(' + (bestGreenDensity*100).toFixed(1) + '% pk)'
-            : 'G-';
-        const gPass = greenOK ? '✓' : (bestGreenDensity >= CELL_DENSITY_MIN ? '[pk<8%]' : '');
-        const rInfo = bestRedDensity >= CELL_DENSITY_MIN
-            ? 'R(' + (bestRedDensity*100).toFixed(1) + '% ' + redSpread + '셀)'
-            : 'R-';
-        const rPass = redOK ? '✓' : (!redConcentrated ? '[분산]' : !redPeakOK ? '[균일]' : '');
-        $('d-tl').textContent = gInfo + gPass + ' ' + rInfo + rPass;
-        const voteInfo = ' [' + colorVotes.slice(-COLOR_VOTE_SIZE).join(',') + ']';
-        $('d-color').textContent = (signalColor === "green" ? '🟢 초록'
-                                 : signalColor === "red"   ? '🔴 빨강'
-                                 : '미확인') + voteInfo;
-    }
+    if (debugOn) $('d-scene').textContent = sceneState + ' (' + (top.probability * 100).toFixed(0) + '%)';
 }
 
+function majorityVote(arr) {
+    const counts = {};
+    for (const v of arr) counts[v] = (counts[v] || 0) + 1;
+    let maxVal = "", maxCount = 0;
+    for (const [k, c] of Object.entries(counts)) {
+        if (c > maxCount) { maxVal = k; maxCount = c; }
+    }
+    return maxVal;
+}
 
-// ── RGB → HSV 변환 ──
-function rgbToHsv(r, g, b) {
-    r /= 255; g /= 255; b /= 255;
-    const max = Math.max(r, g, b), min = Math.min(r, g, b);
-    const d = max - min;
-    let h, s = max === 0 ? 0 : d / max, v = max;
-    if (d === 0) {
-        h = 0;
-    } else {
-        switch (max) {
-            case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
-            case g: h = ((b - r) / d + 2) / 6; break;
-            case b: h = ((r - g) / d + 4) / 6; break;
+// ════════════════════════════════════════════════
+//  ROBOFLOW INFERENCE — 신호등 검출 (green/red/off)
+// ════════════════════════════════════════════════
+async function runRoboflow(src) {
+    if (isRfRunning) return;
+    isRfRunning = true;
+
+    try {
+        const sw = srcW(src), sh = srcH(src);
+
+        // 캔버스에 프레임 복사 → base64 변환
+        rfCanvas.width = 640;
+        rfCanvas.height = Math.floor(640 * sh / sw);
+        rfCtx.drawImage(src, 0, 0, sw, sh, 0, 0, rfCanvas.width, rfCanvas.height);
+
+        const base64 = rfCanvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+
+        const response = await fetch(RF_API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: base64
+        });
+
+        const data = await response.json();
+
+        if (data.predictions && data.predictions.length > 0) {
+            // 가장 신뢰도 높은 예측 선택
+            let best = data.predictions[0];
+            for (const p of data.predictions) {
+                if (p.confidence > best.confidence) best = p;
+            }
+
+            if (best.confidence >= RF_CONFIDENCE_MIN) {
+                signalState = best.class;       // "green", "red", "off"
+                signalConfidence = best.confidence;
+                rfBbox = {
+                    x: best.x, y: best.y,
+                    width: best.width, height: best.height,
+                    imgW: data.image?.width || rfCanvas.width,
+                    imgH: data.image?.height || rfCanvas.height
+                };
+                updateRfOverlay();
+            } else {
+                signalState = "unknown";
+                signalConfidence = 0;
+                hideRfOverlay();
+            }
+        } else {
+            signalState = "unknown";
+            signalConfidence = 0;
+            hideRfOverlay();
         }
+
+        // 점멸 감지: 결과 히스토리 업데이트
+        rfHistory.push(signalState);
+        if (rfHistory.length > BLINK_HISTORY_SIZE) rfHistory.shift();
+        detectBlink();
+
+        // 상태 뱃지 업데이트
+        const badge = document.getElementById('signal-badge');
+        if (signalState === "green") {
+            badge.textContent = 'GREEN ' + (signalConfidence * 100).toFixed(0) + '%';
+            badge.style.color = 'var(--safe)';
+        } else if (signalState === "red") {
+            badge.textContent = 'RED ' + (signalConfidence * 100).toFixed(0) + '%';
+            badge.style.color = 'var(--danger)';
+        } else if (signalState === "off") {
+            badge.textContent = 'OFF ' + (signalConfidence * 100).toFixed(0) + '%';
+            badge.style.color = 'var(--muted)';
+        } else {
+            badge.textContent = sceneState.toUpperCase();
+            badge.style.color = 'var(--text)';
+        }
+
+        if (debugOn) {
+            $('d-signal').textContent = signalState + ' ' + (signalConfidence * 100).toFixed(0) + '%';
+            $('d-rfconf').textContent = data.predictions?.length + '개 감지';
+        }
+
+    } catch (e) {
+        console.warn('Roboflow error:', e);
+        if (debugOn) $('d-signal').textContent = 'API 오류';
+    } finally {
+        isRfRunning = false;
     }
-    return [h * 360, s * 100, v * 100];
 }
 
+// ════════════════════════════════════════════════
+//  ROBOFLOW OVERLAY — 바운딩 박스 표시
+// ════════════════════════════════════════════════
+function updateRfOverlay() {
+    if (!rfBbox) return;
+    const area = document.getElementById('camera-area');
+    const dw = area.offsetWidth, dh = area.offsetHeight;
 
-// ── 신호 감지 위치 오버레이 ──
-function updateScanOverlay(src, hotspot) {
-    const box = document.getElementById('tl-box');
-    if (!hotspot || !tlOn) {
-        box.style.display = 'none';
+    // Roboflow 좌표 → 화면 좌표 변환
+    const scaleX = dw / rfBbox.imgW;
+    const scaleY = dh / rfBbox.imgH;
+
+    const cx = rfBbox.x * scaleX;
+    const cy = rfBbox.y * scaleY;
+    const bw = rfBbox.width * scaleX;
+    const bh = rfBbox.height * scaleY;
+
+    const overlay = document.getElementById('rf-overlay');
+    overlay.style.left   = (cx - bw/2) + 'px';
+    overlay.style.top    = (cy - bh/2) + 'px';
+    overlay.style.width  = bw + 'px';
+    overlay.style.height = bh + 'px';
+    overlay.style.display = 'block';
+
+    overlay.classList.remove('red-signal', 'off-signal');
+    if (signalState === 'red') overlay.classList.add('red-signal');
+    else if (signalState === 'off') overlay.classList.add('off-signal');
+
+    const label = document.getElementById('rf-label');
+    label.textContent = signalState.toUpperCase() + ' ' + (signalConfidence * 100).toFixed(0) + '%';
+}
+
+function hideRfOverlay() {
+    document.getElementById('rf-overlay').style.display = 'none';
+}
+
+// ════════════════════════════════════════════════
+//  BLINK DETECTION — green↔off 패턴 분석
+// ════════════════════════════════════════════════
+function detectBlink() {
+    if (rfHistory.length < 4) {
+        isBlinking = false;
+        if (debugOn) $('d-blink').textContent = '데이터 부족';
         return;
     }
 
-    const area = document.getElementById('camera-area');
-    const areaW = area.offsetWidth, areaH = area.offsetHeight;
-    const sw = srcW(src), sh = srcH(src);
+    // green↔off 전환 횟수 카운트
+    let toggleCount = 0;
+    for (let i = 1; i < rfHistory.length; i++) {
+        const prev = rfHistory[i - 1];
+        const curr = rfHistory[i];
+        if ((prev === 'green' && curr === 'off') || (prev === 'off' && curr === 'green')) {
+            toggleCount++;
+        }
+    }
 
-    // object-fit: cover 좌표 변환
-    const scaleX = areaW / sw, scaleY = areaH / sh;
-    const scale = Math.max(scaleX, scaleY);
-    const renderW = sw * scale, renderH = sh * scale;
-    const offsetX = (areaW - renderW) / 2;
-    const offsetY = (areaH - renderH) / 2;
+    // green과 off만 있고, 전환이 충분히 많으면 → 점멸
+    const hasOnlyGreenOff = rfHistory.every(r => r === 'green' || r === 'off' || r === 'unknown');
+    isBlinking = hasOnlyGreenOff && toggleCount >= BLINK_TOGGLE_MIN;
 
-    const boxW = hotspot.cellW * scale;
-    const boxH = hotspot.cellH * scale;
-    const boxX = offsetX + hotspot.cx * scale - boxW / 2;
-    const boxY = offsetY + hotspot.cy * scale - boxH / 2;
-
-    box.style.display = 'block';
-    box.style.left   = boxX + 'px';
-    box.style.top    = boxY + 'px';
-    box.style.width  = boxW + 'px';
-    box.style.height = boxH + 'px';
-
-    box.classList.remove('green-tl', 'red-tl');
-    if (signalColor === 'green') box.classList.add('green-tl');
-    else if (signalColor === 'red') box.classList.add('red-tl');
-
-    const label = document.getElementById('tl-box-label');
-    label.textContent = signalColor === 'green' ? '🟢 초록'
-                      : signalColor === 'red'   ? '🔴 빨강'
-                      : '탐색중';
+    if (debugOn) $('d-blink').textContent = isBlinking ? '⚡ 점멸! (전환 ' + toggleCount + '회)' : '안정 (전환 ' + toggleCount + '회)';
 }
 
-
 // ════════════════════════════════════════════════
-//  ③ OCR (Tesseract.js) — 변경 없음 + 유효기간 추가
+//  OCR (Tesseract.js)
 // ════════════════════════════════════════════════
 async function runOCR(src) {
     if (!ocrWorker || isOcrRunning || !roiRect) return;
@@ -906,6 +782,7 @@ async function runOCR(src) {
         const ry = Math.floor(roiRect.y * sh);
         const rw = Math.floor(roiRect.w * sw);
         const rh = Math.floor(roiRect.h * sh);
+
         if (rw < 10 || rh < 10) return;
 
         ocrCanvas.width  = rw * 2;
@@ -922,16 +799,11 @@ async function runOCR(src) {
 
         if (nums?.length > 0) {
             const v = parseInt(nums[0]);
-            if (v >= 1 && v <= 99) {
-                ocrTime = v;
-                ocrTimeStamp = Date.now();
-            }
+            if (v >= 1 && v <= 99) ocrTime = v;
         }
 
         if (debugOn) {
-            $('d-ocr').textContent = ocrTime !== null
-                ? ocrTime + '초 (' + Math.round((Date.now() - ocrTimeStamp) / 1000) + '초전)'
-                : '미감지 (' + text.trim() + ')';
+            $('d-ocr').textContent = ocrTime !== null ? ocrTime + '초' : '미감지 (' + text.trim() + ')';
         }
     } catch (e) {
         console.warn('OCR error:', e);
@@ -949,70 +821,11 @@ function binarize(imgData) {
     }
 }
 
-// OCR 잔여시간 보정: 마지막 읽은 값에서 경과 시간 차감
-function getEffectiveTime() {
-    if (ocrTime === null || ocrTimeStamp === 0) return null;
-    const elapsed = (Date.now() - ocrTimeStamp) / 1000;
-    if (elapsed > OCR_STALE_MS / 1000) return null;  // 유효기간 초과
-    return Math.max(0, Math.round(ocrTime - elapsed));
-}
-
-
 // ════════════════════════════════════════════════
-//  ④ 점멸 감지 (v5.2: 신호 핫스팟 기반)
-// ════════════════════════════════════════════════
-function detectBlink(src) {
-    // 초록불이 확인되었을 때만 점멸 감지
-    if (signalColor !== "green" || !signalHotspot) {
-        blinkBuf = [];
-        isBlinking = false;
-        if (debugOn) $('d-blink').textContent = signalColor === "green" ? '대기' : '비활성';
-        return;
-    }
-
-    // 감지된 신호 핫스팟 중심 영역에서 밝기 측정
-    const sw = srcW(src), sh = srcH(src);
-    const cx = Math.floor(signalHotspot.cx);
-    const cy = Math.floor(signalHotspot.cy);
-    const size = Math.max(20, Math.min(50, Math.floor(signalHotspot.cellW)));
-
-    blinkCanvas.width  = size;
-    blinkCanvas.height = size;
-
-    const sx = Math.max(0, cx - Math.floor(size / 2));
-    const sy = Math.max(0, cy - Math.floor(size / 2));
-    const drawW = Math.min(size, sw - sx);
-    const drawH = Math.min(size, sh - sy);
-
-    blinkCtx.drawImage(src, sx, sy, drawW, drawH, 0, 0, size, size);
-
-    const d = blinkCtx.getImageData(0, 0, size, size).data;
-    let bright = 0;
-    const pixels = size * size;
-    for (let i = 0; i < d.length; i += 4) {
-        bright += d[i] * 0.299 + d[i+1] * 0.587 + d[i+2] * 0.114;
-    }
-    bright /= pixels;
-
-    blinkBuf.push(bright);
-    if (blinkBuf.length > BLINK_WIN) blinkBuf.shift();
-
-    if (blinkBuf.length === BLINK_WIN) {
-        const mean = blinkBuf.reduce((a, b) => a + b) / BLINK_WIN;
-        const variance = blinkBuf.reduce((s, v) => s + (v - mean) ** 2, 0) / BLINK_WIN;
-        isBlinking = variance > BLINK_VAR_THRESH;
-    }
-
-    if (debugOn) $('d-blink').textContent = isBlinking ? '⚡ 점멸 감지!' : '안정';
-}
-
-
-// ════════════════════════════════════════════════
-//  ⑤ 횡단 거리 추정 — 변경 없음
+//  CROSSWALK WIDTH ESTIMATION
 // ════════════════════════════════════════════════
 function estimateCrosswalkWidth(src) {
-    if (!["crosswalk", "blinker greenlight", "blinker redlight"].includes(sceneState) &&
-        sceneState !== "crosswalk") return;
+    if (sceneState !== "crosswalk") return;
 
     const sw = srcW(src), sh = srcH(src);
     const scanH = Math.floor(sh * 0.25);
@@ -1045,9 +858,8 @@ function estimateCrosswalkWidth(src) {
     if (debugOn) $('d-width').textContent = estimatedWidth ? estimatedWidth.toFixed(1) + 'm' : '-';
 }
 
-
 // ════════════════════════════════════════════════
-//  GPS 센서 — 변경 없음
+//  SENSORS (GPS)
 // ════════════════════════════════════════════════
 function initSensors() {
     if ('geolocation' in navigator) {
@@ -1078,17 +890,16 @@ function initSensors() {
 
 function haversine(c1, c2) {
     const R = 6371000;
-    const φ1 = c1.latitude  * Math.PI / 180;
-    const φ2 = c2.latitude  * Math.PI / 180;
-    const Δφ = (c2.latitude  - c1.latitude)  * Math.PI / 180;
-    const Δλ = (c2.longitude - c1.longitude) * Math.PI / 180;
-    const a  = Math.sin(Δφ/2)**2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2)**2;
+    const f1 = c1.latitude  * Math.PI / 180;
+    const f2 = c2.latitude  * Math.PI / 180;
+    const df = (c2.latitude  - c1.latitude)  * Math.PI / 180;
+    const dl = (c2.longitude - c1.longitude) * Math.PI / 180;
+    const a  = Math.sin(df/2)**2 + Math.cos(f1) * Math.cos(f2) * Math.sin(dl/2)**2;
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-
 // ════════════════════════════════════════════════
-//  ⑥ 안전 판단 엔진 (v5.0: 장면 + 신호 분리)
+//  DECISION ENGINE
 // ════════════════════════════════════════════════
 function buildDecision() {
     const infoArea = document.getElementById('info-area');
@@ -1096,16 +907,15 @@ function buildDecision() {
 
     const crossW    = estimatedWidth || 8;
     const crossT    = crossW / walkSpeed;
-    const remaining = getEffectiveTime();
+    const remaining = ocrTime;
 
-    // 통계 갱신
+    // 통계 업데이트
     $('s-time').textContent  = remaining !== null ? remaining + '초' : '--';
     $('s-cross').textContent = crossT.toFixed(1) + '초';
     $('s-speed').textContent = walkSpeed.toFixed(1) + 'm/s';
-    $('s-width').textContent = crossW.toFixed(0) + 'm';
+    $('s-width').textContent = crossW.toFixed(0)  + 'm';
     if (debugOn) $('d-crosst').textContent = crossT.toFixed(1) + 's';
 
-    // 하이라이트 초기화
     ['sc-time','sc-cross','sc-speed','sc-width'].forEach(id => {
         document.getElementById(id).classList.remove('highlight', 'warn-val', 'danger-val');
     });
@@ -1114,51 +924,56 @@ function buildDecision() {
     let subText  = "";
     let speakInterval = SPEAK_NORMAL_WAIT;
 
-    // ── 장면이 횡단보도(또는 주변)일 때 ──
-    const isNearCrosswalk = (
-        sceneState === "crosswalk" ||
-        sceneState === "surround crosswalk" ||
-        sceneState === "blinker greenlight" ||
-        sceneState === "blinker redlight"
-    );
+    // ── 1단계: 장면이 횡단보도가 아니면 ──
+    if (sceneState === "background" || sceneState === "low_confidence") {
+        mainText = "🔍 분석 중...";
+        subText  = "카메라를 신호등 방향으로 향하세요";
+        setMsg(mainText, subText);
+        return;
+    }
 
-    if (isNearCrosswalk) {
+    if (sceneState === "surround crosswalk") {
+        mainText = "🛤 횡단보도 주변";
+        subText  = "횡단보도에 가까이 가세요";
+        setMsg(mainText, subText);
+        return;
+    }
 
-        if (signalColor === "red") {
-            // ── 빨간불 ──
+    // ── 2단계: 횡단보도 앞에서 Roboflow 신호 판단 ──
+    switch (signalState) {
+        case "red":
             mainText = "🔴 정지하세요";
             subText  = "빨간 신호입니다. 신호가 바뀔 때까지 기다리세요.";
             infoArea.classList.add('danger');
             document.getElementById('sc-time').classList.add('danger-val');
             speakInterval = SPEAK_DANGER_WAIT;
             if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+            break;
 
-        } else if (signalColor === "green") {
-            // ── 초록불 ──
+        case "green":
             if (isBlinking) {
                 mainText = "⚠️ 신호가 곧 바뀝니다";
                 subText  = remaining
-                    ? remaining + '초 남음 — 시간이 촉박합니다. 다음 신호를 기다리세요.'
+                    ? `${remaining}초 남음 — 시간이 촉박합니다. 다음 신호를 기다리세요.`
                     : "점멸 감지 — 건너지 마세요";
                 infoArea.classList.add('warn', 'blinking');
                 document.getElementById('sc-time').classList.add('warn-val');
                 speakInterval = 4000;
                 if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
-
             } else if (remaining !== null) {
                 if (remaining >= crossT + SAFETY_BUFFER) {
                     mainText = "✅ 건너세요";
-                    subText  = remaining + '초 남음 · 예상 횡단 ' + crossT.toFixed(0) + '초 · 충분히 안전합니다';
+                    subText  = `${remaining}초 남음 · 예상 횡단 ${crossT.toFixed(0)}초 · 충분히 안전합니다`;
                     document.getElementById('sc-time').classList.add('highlight');
                 } else if (remaining >= crossT) {
                     mainText = "⚠️ 서두르세요";
-                    subText  = remaining + '초 남음 · 예상 횡단 ' + crossT.toFixed(0) + '초 · 빠르게 건너야 합니다';
+                    subText  = `${remaining}초 남음 · 예상 횡단 ${crossT.toFixed(0)}초 · 빠르게 건너야 합니다`;
                     infoArea.classList.add('warn');
                     document.getElementById('sc-time').classList.add('warn-val');
                     speakInterval = 4000;
                 } else {
                     mainText = "🛑 다음 신호를 기다리세요";
-                    subText  = remaining + '초 남음 · 예상 횡단 ' + crossT.toFixed(0) + '초 · 시간이 부족합니다';
+                    subText  = `${remaining}초 남음 · 예상 횡단 ${crossT.toFixed(0)}초 · 시간이 부족합니다`;
                     infoArea.classList.add('danger');
                     document.getElementById('sc-time').classList.add('danger-val');
                     speakInterval = SPEAK_DANGER_WAIT;
@@ -1168,51 +983,45 @@ function buildDecision() {
                 subText  = "안전하게 건너세요";
                 document.getElementById('sc-time').classList.add('highlight');
             }
+            break;
 
-        } else {
-            // ── 신호등 미감지 ──
+        case "off":
+            // off 상태가 단독이면 (점멸이 아닌 경우) 신호 전환 중
+            mainText = "⏳ 신호 전환 중";
+            subText  = "잠시 기다려 주세요";
+            break;
+
+        default:
+            // Roboflow가 신호등을 못 찾음 → 장면만으로 안내
             if (sceneState === "crosswalk") {
-                mainText = "🚶 횡단보도 위입니다";
+                mainText = "🚶 횡단보도 감지됨";
                 subText  = estimatedWidth
-                    ? '횡단 거리 약 ' + estimatedWidth.toFixed(0) + 'm · 신호등을 탐색 중...'
-                    : "신호등을 탐색하고 있습니다...";
-            } else {
-                mainText = "🛤 횡단보도 주변입니다";
-                subText  = "신호등을 탐색하고 있습니다...";
+                    ? `횡단 거리 약 ${estimatedWidth.toFixed(0)}m · 신호를 확인하세요`
+                    : "신호를 확인하세요";
             }
-        }
-
-    } else if (sceneState === "background") {
-        mainText = "📍 일반 보도";
-        subText  = "횡단보도가 감지되지 않습니다";
-
-    } else if (sceneState === "low_confidence") {
-        mainText = "🔍 분석 중...";
-        subText  = "카메라를 전방으로 향하세요";
-
-    } else {
-        return;  // unknown 상태 → UI 갱신 안 함
+            break;
     }
+
+    if (!mainText) return;
 
     setMsg(mainText, subText);
 
     // 음성 안내
     const now = Date.now();
     if (mainText !== lastMsg || now - lastSpeakMs > speakInterval) {
-        const clean = mainText.replace(/[🔴🟢✅⚠️🛑🚶🛤🔍📍]/gu, '').trim();
+        const clean = mainText.replace(/[🔴🟢✅⚠️🛑🚶🛤🔍⏳]/gu, '').trim();
         speak(clean + ". " + subText);
         lastMsg     = mainText;
         lastSpeakMs = now;
     }
 }
 
-
 // ════════════════════════════════════════════════
 //  UI HELPERS
 // ════════════════════════════════════════════════
-function setMsg(main, sub) {
+function setMsg(main, sub = "") {
     document.getElementById('main-msg').textContent = main;
-    document.getElementById('sub-msg').textContent  = sub || "";
+    document.getElementById('sub-msg').textContent  = sub;
 }
 
 function bar(pct) {
@@ -1231,7 +1040,9 @@ function speak(text) {
     window.speechSynthesis.speak(u);
 }
 
-function repeatSpeak() { if (lastSpeakText) speak(lastSpeakText); }
+function repeatSpeak() {
+    if (lastSpeakText) speak(lastSpeakText);
+}
 
 function toggleDebug() {
     debugOn = !debugOn;
@@ -1243,12 +1054,6 @@ function toggleROI() {
     roiOn = !roiOn;
     document.getElementById('roi-overlay').style.display = roiOn ? 'block' : 'none';
     document.getElementById('btn-roi').classList.toggle('active', roiOn);
-}
-
-function toggleTL() {
-    tlOn = !tlOn;
-    document.getElementById('btn-tl').classList.toggle('active', tlOn);
-    if (!tlOn) document.getElementById('tl-box').style.display = 'none';
 }
 
 function setDefaultROI(sw, sh) {
@@ -1267,8 +1072,7 @@ function updateROI() {
     roi.style.height = (roiRect.h * dh) + 'px';
 }
 
-window.addEventListener('resize', updateROI);
-
+window.addEventListener('resize', () => { updateROI(); });
 
 // ════════════════════════════════════════════════
 //  UTILS
@@ -1276,20 +1080,6 @@ window.addEventListener('resize', updateROI);
 function srcW(src) { return src instanceof HTMLVideoElement ? src.videoWidth  : src.width;  }
 function srcH(src) { return src instanceof HTMLVideoElement ? src.videoHeight : src.height; }
 function $(id)     { return document.getElementById(id); }
-
-// v5.1: 최빈값 투표 함수 — 배열에서 가장 많이 등장한 값 반환
-function majorityVote(arr) {
-    if (arr.length === 0) return "unknown";
-    const counts = {};
-    for (const v of arr) {
-        counts[v] = (counts[v] || 0) + 1;
-    }
-    let best = arr[0], bestCount = 0;
-    for (const [key, count] of Object.entries(counts)) {
-        if (count > bestCount) { best = key; bestCount = count; }
-    }
-    return best;
-}
 </script>
 </body>
 </html>
