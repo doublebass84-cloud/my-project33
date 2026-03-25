@@ -1,0 +1,1295 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>횡단보도 안내 시스템 v5.5.1</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
+    <style>
+        :root {
+            --safe:    #00e676;
+            --danger:  #ff1744;
+            --warn:    #ffab00;
+            --bg:      #050a0e;
+            --panel:   #0d1821;
+            --border:  #1a2a3a;
+            --text:    #e8f0f7;
+            --muted:   #4a6070;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Noto Sans KR', sans-serif;
+            height: 100dvh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* ── 카메라 영역 ── */
+        #camera-area {
+            position: relative;
+            flex: 1 1 60%;
+            background: #000;
+            overflow: hidden;
+            min-height: 0;
+        }
+        #camera-area canvas,
+        #camera-area video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        /* ROI 오버레이 */
+        #roi-overlay {
+            position: absolute;
+            border: 2px dashed rgba(255, 213, 0, 0.8);
+            background: rgba(255, 213, 0, 0.04);
+            pointer-events: none;
+            display: none;
+            border-radius: 4px;
+        }
+        #roi-label {
+            position: absolute;
+            top: -22px; left: 0;
+            font-size: 11px;
+            color: #ffd500;
+            font-family: 'JetBrains Mono', monospace;
+            white-space: nowrap;
+            background: rgba(0,0,0,0.6);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        /* 신호등 감지 박스 */
+        #tl-box {
+            position: absolute;
+            pointer-events: none;
+            display: none;
+            border-radius: 4px;
+            border: 2px solid rgba(255,255,255,0.5);
+            transition: border-color 0.2s;
+        }
+        #tl-box.green-tl {
+            border-color: var(--safe);
+            box-shadow: 0 0 12px rgba(0,230,118,0.5);
+        }
+        #tl-box.red-tl {
+            border-color: var(--danger);
+            box-shadow: 0 0 12px rgba(255,23,68,0.5);
+        }
+        #tl-box-label {
+            position: absolute;
+            bottom: -20px; left: 0;
+            font-size: 10px;
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(0,0,0,0.7);
+            padding: 1px 5px;
+            border-radius: 3px;
+            white-space: nowrap;
+            color: #fff;
+        }
+
+        /* 디버그 패널 */
+        #debug-panel {
+            position: absolute;
+            top: 10px; left: 10px;
+            background: rgba(5, 10, 14, 0.85);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            line-height: 2;
+            display: none;
+            color: #7ec8e3;
+            backdrop-filter: blur(6px);
+            z-index: 10;
+        }
+        #debug-panel .dv { color: #e8f0f7; }
+
+        /* 상태 뱃지 */
+        #signal-badge {
+            position: absolute;
+            top: 12px; right: 12px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(0,0,0,0.7);
+            border: 1px solid var(--border);
+            letter-spacing: 0.05em;
+            transition: all 0.3s;
+            z-index: 10;
+        }
+
+        /* 로딩 바 */
+        #loading-bar {
+            position: absolute;
+            bottom: 0; left: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--safe), #00bcd4);
+            width: 0%;
+            transition: width 0.4s ease;
+        }
+
+        /* 도구 버튼 */
+        #toolbar {
+            position: absolute;
+            bottom: 12px; right: 10px;
+            display: flex;
+            gap: 6px;
+            z-index: 10;
+        }
+        .tool-btn {
+            background: rgba(5, 10, 14, 0.8);
+            border: 1px solid var(--border);
+            color: var(--muted);
+            border-radius: 6px;
+            padding: 5px 10px;
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            cursor: pointer;
+            transition: color 0.2s, border-color 0.2s;
+        }
+        .tool-btn:hover { color: var(--text); border-color: var(--safe); }
+        .tool-btn.active { color: var(--safe); border-color: var(--safe); }
+
+        /* ── 정보 패널 ── */
+        #info-area {
+            flex: 0 0 auto;
+            background: var(--panel);
+            border-top: 4px solid var(--safe);
+            padding: 18px 20px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            cursor: pointer;
+            transition: border-color 0.3s;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #info-area.danger  { border-top-color: var(--danger); }
+        #info-area.warn    { border-top-color: var(--warn); }
+
+        #main-msg {
+            font-size: clamp(1.3rem, 5vw, 1.9rem);
+            font-weight: 900;
+            line-height: 1.25;
+            word-break: keep-all;
+            letter-spacing: -0.02em;
+        }
+        #sub-msg {
+            font-size: clamp(0.8rem, 3vw, 0.95rem);
+            color: var(--muted);
+            word-break: keep-all;
+            line-height: 1.4;
+            min-height: 1.2em;
+        }
+
+        /* 통계 행 */
+        #stats-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            margin-top: 4px;
+        }
+        .stat-card {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 6px;
+            text-align: center;
+        }
+        .stat-val {
+            display: block;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: clamp(0.85rem, 3vw, 1.05rem);
+            font-weight: 700;
+            color: var(--text);
+            margin-bottom: 2px;
+        }
+        .stat-lbl {
+            font-size: 10px;
+            color: var(--muted);
+            letter-spacing: 0.03em;
+        }
+        .stat-card.highlight .stat-val { color: var(--safe); }
+        .stat-card.warn-val .stat-val  { color: var(--warn); }
+        .stat-card.danger-val .stat-val { color: var(--danger); }
+
+        /* 탭 힌트 */
+        #tap-hint {
+            font-size: 10px;
+            color: #2a3a4a;
+            text-align: center;
+            letter-spacing: 0.05em;
+        }
+
+        /* ── 오버레이 ── */
+        #overlay {
+            position: fixed; inset: 0;
+            background: radial-gradient(ellipse at center, #0d1821 0%, #050a0e 100%);
+            z-index: 300;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 24px;
+            padding: 30px;
+        }
+        .logo { font-size: 3rem; margin-bottom: 4px; }
+        #overlay h1 {
+            font-size: 1.4rem;
+            font-weight: 900;
+            color: var(--safe);
+            letter-spacing: -0.02em;
+            text-align: center;
+        }
+        #overlay p {
+            font-size: 0.88rem;
+            color: var(--muted);
+            text-align: center;
+            line-height: 1.7;
+            max-width: 340px;
+        }
+        .btn-row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+        .btn-start {
+            padding: 18px 40px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            font-family: 'Noto Sans KR', sans-serif;
+            border: none;
+            border-radius: 50px;
+            background: var(--safe);
+            color: #050a0e;
+            cursor: pointer;
+            transition: transform 0.1s, box-shadow 0.2s;
+            box-shadow: 0 0 30px rgba(0, 230, 118, 0.3);
+        }
+        .btn-start:active { transform: scale(0.96); }
+        label[for="video-input"],
+        .btn-secondary {
+            padding: 18px 28px;
+            font-size: 1rem;
+            font-weight: 700;
+            font-family: 'Noto Sans KR', sans-serif;
+            border: 2px solid var(--border);
+            border-radius: 50px;
+            background: transparent;
+            color: var(--muted);
+            cursor: pointer;
+            transition: border-color 0.2s, color 0.2s;
+        }
+        label[for="video-input"]:hover { border-color: var(--text); color: var(--text); }
+        #video-input { display: none; }
+        .notice { font-size: 0.75rem; color: #2a3a4a; text-align: center; }
+        .version-tag { font-size: 0.7rem; color: #1a2a3a; margin-top: 8px; }
+
+        /* 점멸 애니메이션 */
+        @keyframes warn-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+        .blinking #main-msg { animation: warn-pulse 0.8s ease infinite; }
+    </style>
+</head>
+<body>
+
+<!-- ═══ 시작 오버레이 ═══ -->
+<div id="overlay">
+    <div class="logo">🚦</div>
+    <h1>횡단보도 안내 시스템</h1>
+    <p>시각장애인을 위한 실시간 신호 안내<br>카메라를 신호등 방향으로 향한 후 시작하세요</p>
+    <div class="btn-row">
+        <button class="btn-start" onclick="startApp('camera')">📷 카메라 시작</button>
+        <label for="video-input">🎬 영상 테스트</label>
+        <input type="file" id="video-input" accept="video/*" onchange="startApp('video', this)">
+    </div>
+    <p class="notice">카메라 · 위치 · 센서 권한이 필요합니다</p>
+    <div class="version-tag">v5.5 — 초록 색조 범위 수정 (H35~170)</div>
+</div>
+
+<!-- ═══ 카메라 영역 ═══ -->
+<div id="camera-area">
+    <div id="roi-overlay"><span id="roi-label">OCR 영역 (숫자 인식)</span></div>
+    <div id="tl-box"><span id="tl-box-label">신호등</span></div>
+
+    <div id="debug-panel">
+        <div>SCENE   <span class="dv" id="d-scene">-</span></div>
+        <div>CONF    <span class="dv" id="d-conf">-</span></div>
+        <div>SCAN    <span class="dv" id="d-tl">-</span></div>
+        <div>COLOR   <span class="dv" id="d-color">-</span></div>
+        <div>TOP5    <span class="dv" id="d-top5">-</span></div>
+        <div>GHUE    <span class="dv" id="d-ghue">-</span></div>
+        <div>OCR     <span class="dv" id="d-ocr">-</span></div>
+        <div>BLINK   <span class="dv" id="d-blink">-</span></div>
+        <div>WIDTH   <span class="dv" id="d-width">-</span></div>
+        <div>SPEED   <span class="dv" id="d-speed">-</span></div>
+        <div>CROSS_T <span class="dv" id="d-crosst">-</span></div>
+    </div>
+
+    <div id="signal-badge">STANDBY</div>
+
+    <div id="toolbar">
+        <button class="tool-btn" id="btn-debug" onclick="toggleDebug()">디버그</button>
+        <button class="tool-btn" id="btn-roi"   onclick="toggleROI()">OCR영역</button>
+        <button class="tool-btn" id="btn-tl"    onclick="toggleTL()">신호등</button>
+    </div>
+    <div id="loading-bar"></div>
+</div>
+
+<!-- ═══ 정보 패널 ═══ -->
+<div id="info-area" onclick="repeatSpeak()" aria-live="assertive" role="status">
+    <div id="main-msg">시스템 대기 중</div>
+    <div id="sub-msg">터치하면 음성 반복</div>
+    <div id="stats-row">
+        <div class="stat-card" id="sc-time">
+            <span class="stat-val" id="s-time">--</span>
+            <span class="stat-lbl">잔여시간</span>
+        </div>
+        <div class="stat-card" id="sc-cross">
+            <span class="stat-val" id="s-cross">--</span>
+            <span class="stat-lbl">예상횡단</span>
+        </div>
+        <div class="stat-card" id="sc-speed">
+            <span class="stat-val" id="s-speed">--</span>
+            <span class="stat-lbl">보행속도</span>
+        </div>
+        <div class="stat-card" id="sc-width">
+            <span class="stat-val" id="s-width">--</span>
+            <span class="stat-lbl">횡단거리</span>
+        </div>
+    </div>
+    <div id="tap-hint">화면을 탭하면 음성 반복</div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════
+//  v5.4 — 큰 그리드(8×3) + 피크밀도 방식
+// ════════════════════════════════════════════════════════════
+//  v5.3 → v5.4 변경:
+//    그리드 16×6 → 8×3: 셀을 크게 해서 신호등 LED가 1셀에 집중
+//    초록 명도 78→65%: 밤 신호등도 감지
+//    초록 피크 기준 8→5%: 큰 셀에 맞춤
+//    빨강 명도 70→65%: 동일 기준
+//  유지: 초록=피크밀도, 빨강=집중도+피크대비 비대칭 판정
+// ════════════════════════════════════════════════════════════
+
+// ── CONFIG ──
+const TM_MODEL_URL       = "https://teachablemachine.withgoogle.com/models/evw4CriFx/";
+
+const PREDICT_INTERVAL   = 200;    // TM 예측 주기 (ms)
+const SCAN_INTERVAL      = 400;    // HSV 스캔 주기 (ms)
+const OCR_INTERVAL       = 1200;   // OCR 실행 주기 (ms)
+
+const CONFIDENCE_MIN     = 0.90;   // TM 최소 신뢰도
+
+const BLINK_WIN          = 24;     // 점멸 감지 윈도우 (프레임)
+const BLINK_VAR_THRESH   = 35;     // 점멸 판단 분산 임계값
+
+const SAFETY_BUFFER      = 3;      // 안전 여유 (초)
+const DEFAULT_SPEED      = 1.2;    // 기본 보행속도 (m/s)
+const STRIPE_M           = 1.0;    // 줄무늬 1쌍 = 1m
+const SCENE_VOTE_SIZE    = 8;      // 장면 분류 투표 윈도우 크기
+const COLOR_VOTE_SIZE    = 6;      // 신호 색상 투표 윈도우 크기
+
+const SPEAK_DANGER_WAIT  = 3000;
+const SPEAK_NORMAL_WAIT  = 5000;
+const OCR_STALE_MS       = 4000;   // OCR 값 유효 기간 (ms)
+
+// ── HSV 스캔 설정 ──
+const SCAN_TOP_RATIO     = 0.35;
+const GRID_COLS          = 16;     // v5.2 성공값 복원
+const GRID_ROWS          = 6;      // v5.2 성공값 복원
+const GREEN_HUE_MIN      = 35;     // 밤 LED 과노출 시 H44~77로 찍힘
+const GREEN_HUE_MAX      = 170;
+const RED_HUE_MAX_LOW    = 25;
+const RED_HUE_MIN_HIGH   = 335;
+const SCAN_SAT_MIN       = 18;     // 밤 LED 과노출 시 채도 S20~24로 낮아짐
+const SCAN_BRIGHT_MIN    = 75;     // 빨강용 최소 명도 — v5.2 성공값 복원
+const SCAN_BRIGHT_GREEN  = 65;     // 초록용 최소 명도 — 진단 후 조정 예정
+const CELL_DENSITY_MIN   = 0.03;   // 셀 내 유효 픽셀 비율 최소값 (3%)
+const GREEN_PEAK_MIN     = 0.05;   // 초록 피크 밀도 최소값 (5%)
+const MAX_SPREAD_CELLS   = 3;      // 빨강 최대 허용 셀 수
+const PEAK_TO_AVG_RATIO  = 2.5;    // 빨강 피크 대비 배수
+const COLOR_DOMINANCE    = 1.5;
+
+
+// ── STATE ──
+let tmModel, webcam, maxPredictions;
+let videoEl        = null;
+let isVideoMode    = false;
+
+// 장면 분류 (TM) — 최빈값 투표
+let sceneState     = "unknown";
+let sceneVotes     = [];
+
+// 신호등 색상 (HSV 그리드 스캔) — 최빈값 투표
+let signalColor     = "unknown";   // "green" | "red" | "unknown"
+let colorVotes      = [];
+let signalHotspot   = null;        // {cx, cy, cellW, cellH} 가장 강한 신호 셀 위치
+
+// OCR
+let ocrTime        = null;
+let ocrTimeStamp   = 0;           // OCR 값이 갱신된 시각
+let isOcrRunning   = false;
+let ocrWorker      = null;
+
+// 점멸
+let isBlinking     = false;
+let blinkBuf       = [];
+
+// 횡단 거리 / 보행 속도
+let estimatedWidth = null;
+let walkSpeed      = DEFAULT_SPEED;
+let speedHistory   = [];
+let lastGpsCoords  = null;
+let lastGpsMs      = null;
+
+// UI
+let lastMsg        = "";
+let lastSpeakMs    = 0;
+let lastPredictTs  = 0;
+let lastScanTs     = 0;
+let lastOcrTs      = 0;
+
+let debugOn        = false;
+let roiOn          = false;
+let tlOn           = true;        // 스캔 영역 표시 기본 ON
+let roiRect        = null;
+
+// 오프스크린 캔버스
+const blinkCanvas = document.createElement('canvas');
+const blinkCtx    = blinkCanvas.getContext('2d', { willReadFrequently: true });
+const ocrCanvas   = document.createElement('canvas');
+const ocrCtx      = ocrCanvas.getContext('2d', { willReadFrequently: true });
+const cwCanvas    = document.createElement('canvas');
+const cwCtx       = cwCanvas.getContext('2d', { willReadFrequently: true });
+const colorCanvas = document.createElement('canvas');
+const colorCtx    = colorCanvas.getContext('2d', { willReadFrequently: true });
+
+
+// ════════════════════════════════════════════════
+//  ENTRY POINT
+// ════════════════════════════════════════════════
+async function startApp(mode, fileInput) {
+    document.getElementById('overlay').style.display = 'none';
+    setMsg("시스템 초기화 중...", "모델을 로드하고 있습니다");
+    speak(" ");
+
+    try {
+        // 1. 모델 병렬 로드 (v5.2: TM + OCR만, COCO-SSD 제거)
+        bar(10);
+        setMsg("초기화 중...", "모델을 로드합니다");
+
+        const ocrPromise = Tesseract.createWorker('eng', 1, { logger: () => {} })
+            .then(async w => { await w.setParameters({ tessedit_char_whitelist: '0123456789' }); return w; })
+            .catch(e => { console.warn('OCR 비활성화:', e.message); return null; });
+
+        const [loadedTM, loadedOcr] = await Promise.all([
+            tmImage.load(TM_MODEL_URL + "model.json", TM_MODEL_URL + "metadata.json"),
+            ocrPromise
+        ]);
+
+        tmModel   = loadedTM;
+        ocrWorker = loadedOcr;
+        maxPredictions = tmModel.getTotalClasses();
+
+        if (!ocrWorker) $('s-time').textContent = 'N/A';
+
+        // 2. 카메라 또는 비디오
+        bar(70);
+        setMsg("초기화 중...", "카메라 연결");
+        if (mode === 'camera') {
+            await initCamera();
+        } else {
+            await initVideo(fileInput.files[0]);
+        }
+
+        // 5. 센서
+        bar(90);
+        initSensors();
+
+        bar(100);
+        setTimeout(() => bar(0), 600);
+
+        setMsg("분석 시작", "카메라를 전방으로 향하세요");
+        speak("시스템이 활성화되었습니다.");
+
+        // 신호등 박스 기본 표시
+        document.getElementById('btn-tl').classList.add('active');
+
+        requestAnimationFrame(mainLoop);
+    } catch (e) {
+        setMsg("초기화 오류", e.message);
+        speak("오류가 발생했습니다.");
+        console.error(e);
+    }
+}
+
+async function initCamera() {
+    const w = window.innerWidth;
+    const h = Math.floor(window.innerHeight * 0.6);
+    webcam = new tmImage.Webcam(w, h, false);
+    await webcam.setup({ facingMode: "environment" });
+    await webcam.play();
+    document.getElementById("camera-area").appendChild(webcam.canvas);
+    setDefaultROI(webcam.canvas.width, webcam.canvas.height);
+}
+
+async function initVideo(file) {
+    isVideoMode = true;
+    videoEl = document.createElement('video');
+    videoEl.src = URL.createObjectURL(file);
+    videoEl.loop = true;
+    videoEl.muted = true;
+    videoEl.playsInline = true;
+    videoEl.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
+    document.getElementById("camera-area").appendChild(videoEl);
+    await videoEl.play();
+    videoEl.addEventListener('loadedmetadata', () => {
+        setDefaultROI(videoEl.videoWidth, videoEl.videoHeight);
+    });
+}
+
+
+// ════════════════════════════════════════════════
+//  MAIN LOOP
+// ════════════════════════════════════════════════
+async function mainLoop(ts) {
+    const src = getSource();
+    if (!src) { requestAnimationFrame(mainLoop); return; }
+    if (!isVideoMode) webcam.update();
+
+    // ① TM: 장면 분류
+    if (ts - lastPredictTs > PREDICT_INTERVAL) {
+        await runPrediction(src);
+        lastPredictTs = ts;
+    }
+
+    // ② HSV 그리드 스캔: 상단 영역에서 신호등 색상 탐지
+    if (ts - lastScanTs > SCAN_INTERVAL) {
+        scanUpperRegion(src);
+        lastScanTs = ts;
+    }
+
+    // ③ OCR: 잔여 시간
+    if (ts - lastOcrTs > OCR_INTERVAL) {
+        runOCR(src);
+        lastOcrTs = ts;
+    }
+
+    // ④ 점멸 감지 (신호등 bbox 기반)
+    detectBlink(src);
+
+    // ⑤ 횡단 거리 추정
+    estimateCrosswalkWidth(src);
+
+    // ⑥ 안전 판단 + 음성 안내
+    buildDecision();
+
+    requestAnimationFrame(mainLoop);
+}
+
+function getSource() {
+    if (isVideoMode) {
+        return (videoEl && !videoEl.paused && videoEl.readyState >= 2) ? videoEl : null;
+    }
+    return webcam ? webcam.canvas : null;
+}
+
+
+// ════════════════════════════════════════════════
+//  ① TM 장면 분류 (신호 색상은 담당하지 않음)
+// ════════════════════════════════════════════════
+async function runPrediction(src) {
+    if (!tmModel) return;
+    const preds = await tmModel.predict(src);
+
+    let top = { className: "unknown", probability: 0 };
+    for (const p of preds) {
+        if (p.probability > top.probability) top = p;
+    }
+
+    // 기존 5클래스 모델 호환: 신호등 관련 클래스 → crosswalk로 매핑
+    let scene = top.className;
+    if (scene === "blinker greenlight" || scene === "blinker redlight") {
+        scene = "crosswalk";
+    }
+
+    const detected = top.probability >= CONFIDENCE_MIN ? scene : "low_confidence";
+
+    // v5.1: 최빈값 투표로 장면 확정
+    sceneVotes.push(detected);
+    if (sceneVotes.length > SCENE_VOTE_SIZE) sceneVotes.shift();
+    sceneState = majorityVote(sceneVotes);
+
+    // 뱃지 업데이트
+    const badge = document.getElementById('signal-badge');
+    const sLabel = sceneState.replace('surround crosswalk', 'SURROUND').toUpperCase();
+    const cLabel = signalColor !== "unknown" ? " · " + signalColor.toUpperCase() : "";
+    badge.textContent = sLabel + cLabel;
+
+    if (signalColor === "green") {
+        badge.style.color = 'var(--safe)';
+        badge.style.borderColor = 'var(--safe)';
+    } else if (signalColor === "red") {
+        badge.style.color = 'var(--danger)';
+        badge.style.borderColor = 'var(--danger)';
+    } else {
+        badge.style.color = '';
+        badge.style.borderColor = '';
+    }
+
+    if (debugOn) {
+        $('d-scene').textContent = scene + ' → ' + sceneState + ' (' + sceneVotes.length + '/' + SCENE_VOTE_SIZE + ')';
+        $('d-conf').textContent  = (top.probability * 100).toFixed(1) + '%';
+    }
+}
+
+
+// ════════════════════════════════════════════════
+//  ② 상단 HSV 그리드 스캔 (v5.2: COCO-SSD 대체)
+// ════════════════════════════════════════════════
+// 화면 상단 40%를 10×4 그리드로 나누고,
+// 각 셀에서 밝고 채도 높은 초록/빨강 픽셀 밀도를 계산.
+// 가장 밀도 높은 셀 = 신호등 위치로 추정.
+//
+// v5.2 집중도 필터:
+//   신호등 LED = 1~2개 셀에 집중된 점광원
+//   간판/건물 조명 = 여러 셀에 넓게 퍼짐
+//   → 색상이 퍼진 셀 수가 MAX_SPREAD_CELLS 이상이면 무시
+// ════════════════════════════════════════════════
+function scanUpperRegion(src) {
+    const sw = srcW(src), sh = srcH(src);
+    const scanH = Math.floor(sh * SCAN_TOP_RATIO);
+    if (scanH < 10 || sw < 10) return;
+
+    // 상단 영역 추출
+    colorCanvas.width  = sw;
+    colorCanvas.height = scanH;
+    colorCtx.drawImage(src, 0, 0, sw, scanH, 0, 0, sw, scanH);
+    const imgData = colorCtx.getImageData(0, 0, sw, scanH);
+    const d = imgData.data;
+
+    const cellW = Math.floor(sw / GRID_COLS);
+    const cellH = Math.floor(scanH / GRID_ROWS);
+    const cellPixels = cellW * cellH;
+
+    let bestGreenDensity = 0, bestRedDensity = 0;
+    let bestGreenCell = null, bestRedCell = null;
+    let totalGreen = 0, totalRed = 0;
+    let greenSpread = 0, redSpread = 0;
+
+    // ═══ 진단: 상단 영역에서 가장 밝은 유채색 픽셀 수집 ═══
+    let topPixels = [];  // {h, s, v, r, g, b} 상위 밝기
+    let greenishPixels = 0;  // hue 60~200 범위 픽셀 수 (느슨한 초록)
+    let reddishPixels = 0;   // hue 0~40 또는 320~360 (느슨한 빨강)
+    const SAMPLE_STEP = 4;   // 성능을 위해 4픽셀마다 샘플링
+    for (let i = 0; i < d.length; i += 4 * SAMPLE_STEP) {
+        const R = d[i], G = d[i+1], B = d[i+2];
+        const [h, s, v] = rgbToHsv(R, G, B);
+        if (v > 40 && s > 10) {  // 매우 느슨한 기준
+            if (h >= 60 && h <= 200) greenishPixels++;
+            if (h <= 40 || h >= 320) reddishPixels++;
+        }
+        if (v > 60 && s > 15) {
+            topPixels.push({ h: Math.round(h), s: Math.round(s), v: Math.round(v), R, G, B });
+        }
+    }
+    topPixels.sort((a, b) => b.v - a.v);
+    const top5 = topPixels.slice(0, 5);
+
+    if (debugOn) {
+        $('d-top5').textContent = top5.map(p => 'H' + p.h + ' S' + p.s + ' V' + p.v).join(' | ');
+        $('d-ghue').textContent = '느슨G:' + greenishPixels + ' 느슨R:' + reddishPixels +
+            ' (전체 ' + Math.floor(d.length / 4 / SAMPLE_STEP) + '샘플)';
+    }
+    // ═══ 진단 끝 ═══
+
+    // 그리드 순회
+    for (let row = 0; row < GRID_ROWS; row++) {
+        for (let col = 0; col < GRID_COLS; col++) {
+            const x0 = col * cellW;
+            const y0 = row * cellH;
+            let gCount = 0, rCount = 0;
+
+            for (let y = y0; y < y0 + cellH && y < scanH; y++) {
+                for (let x = x0; x < x0 + cellW && x < sw; x++) {
+                    const idx = (y * sw + x) * 4;
+                    const R = d[idx], G = d[idx+1], B = d[idx+2];
+
+                    const [hue, sat, val] = rgbToHsv(R, G, B);
+
+                    // 채도 기본 필터
+                    if (sat < SCAN_SAT_MIN) continue;
+
+                    // 초록: LED급 밝기만 통과 (나무 제외)
+                    if (val >= SCAN_BRIGHT_GREEN && hue >= GREEN_HUE_MIN && hue <= GREEN_HUE_MAX) {
+                        gCount++;
+                    }
+                    // 빨강: 일반 밝기 기준 (자연에 드물어서)
+                    if (val >= SCAN_BRIGHT_MIN && (hue <= RED_HUE_MAX_LOW || hue >= RED_HUE_MIN_HIGH)) {
+                        rCount++;
+                    }
+                }
+            }
+
+            totalGreen += gCount;
+            totalRed   += rCount;
+
+            const gDensity = gCount / cellPixels;
+            const rDensity = rCount / cellPixels;
+
+            // 집중도 분석: 이 셀에 유의미한 색상이 있는가?
+            if (gDensity >= CELL_DENSITY_MIN) greenSpread++;
+            if (rDensity >= CELL_DENSITY_MIN) redSpread++;
+
+            if (gDensity > bestGreenDensity) {
+                bestGreenDensity = gDensity;
+                bestGreenCell = { col, row, cx: x0 + cellW/2, cy: y0 + cellH/2 };
+            }
+            if (rDensity > bestRedDensity) {
+                bestRedDensity = rDensity;
+                bestRedCell = { col, row, cx: x0 + cellW/2, cy: y0 + cellH/2 };
+            }
+        }
+    }
+
+    // ═══ v5.3: 초록/빨강 비대칭 필터 ═══
+
+    // 초록 판정: 피크 밀도만으로 판단 (분산 무시)
+    // 이유: 나무 초록은 여러 셀에 1~3%씩 퍼지지만,
+    //       신호등 LED는 한 셀에 8~40%가 집중됨.
+    //       높은 명도(78%)로 이미 나무 대부분을 걸렀으므로
+    //       피크 밀도가 높으면 LED로 확신할 수 있음.
+    const greenOK = bestGreenDensity >= GREEN_PEAK_MIN;
+
+    // 빨강 판정: 기존 3중 필터 유지 (집중도 + 피크대비)
+    // 이유: 빨강은 자연에 드물지만 간판/차양이 문제.
+    //       간판은 넓게 퍼지고, 차양은 밀도가 균일함.
+    const redConcentrated = (redSpread >= 1 && redSpread <= MAX_SPREAD_CELLS);
+    const redAvgDensity   = redSpread > 0 ? (totalRed / cellPixels / redSpread) : 0;
+    const redPeakOK       = redAvgDensity > 0
+        ? (bestRedDensity / redAvgDensity >= PEAK_TO_AVG_RATIO)
+        : bestRedDensity >= CELL_DENSITY_MIN;
+    const redOK = bestRedDensity >= CELL_DENSITY_MIN && redConcentrated && redPeakOK;
+
+    let frameColor = "unknown";
+
+    if (greenOK && redOK) {
+        if (totalGreen > totalRed * COLOR_DOMINANCE) {
+            frameColor = "green";
+            signalHotspot = { cx: bestGreenCell.cx, cy: bestGreenCell.cy, cellW, cellH };
+        } else if (totalRed > totalGreen * COLOR_DOMINANCE) {
+            frameColor = "red";
+            signalHotspot = { cx: bestRedCell.cx, cy: bestRedCell.cy, cellW, cellH };
+        }
+    } else if (greenOK) {
+        frameColor = "green";
+        signalHotspot = { cx: bestGreenCell.cx, cy: bestGreenCell.cy, cellW, cellH };
+    } else if (redOK) {
+        frameColor = "red";
+        signalHotspot = { cx: bestRedCell.cx, cy: bestRedCell.cy, cellW, cellH };
+    } else {
+        signalHotspot = null;
+    }
+
+    // 최빈값 투표
+    colorVotes.push(frameColor);
+    if (colorVotes.length > COLOR_VOTE_SIZE) colorVotes.shift();
+    signalColor = majorityVote(colorVotes);
+
+    // 오버레이 업데이트
+    updateScanOverlay(src, signalHotspot);
+
+    if (debugOn) {
+        const gInfo = bestGreenDensity >= CELL_DENSITY_MIN
+            ? 'G(' + (bestGreenDensity*100).toFixed(1) + '% pk)'
+            : 'G-';
+        const gPass = greenOK ? '✓' : (bestGreenDensity >= CELL_DENSITY_MIN ? '[pk<8%]' : '');
+        const rInfo = bestRedDensity >= CELL_DENSITY_MIN
+            ? 'R(' + (bestRedDensity*100).toFixed(1) + '% ' + redSpread + '셀)'
+            : 'R-';
+        const rPass = redOK ? '✓' : (!redConcentrated ? '[분산]' : !redPeakOK ? '[균일]' : '');
+        $('d-tl').textContent = gInfo + gPass + ' ' + rInfo + rPass;
+        const voteInfo = ' [' + colorVotes.slice(-COLOR_VOTE_SIZE).join(',') + ']';
+        $('d-color').textContent = (signalColor === "green" ? '🟢 초록'
+                                 : signalColor === "red"   ? '🔴 빨강'
+                                 : '미확인') + voteInfo;
+    }
+}
+
+
+// ── RGB → HSV 변환 ──
+function rgbToHsv(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    const d = max - min;
+    let h, s = max === 0 ? 0 : d / max, v = max;
+    if (d === 0) {
+        h = 0;
+    } else {
+        switch (max) {
+            case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+            case g: h = ((b - r) / d + 2) / 6; break;
+            case b: h = ((r - g) / d + 4) / 6; break;
+        }
+    }
+    return [h * 360, s * 100, v * 100];
+}
+
+
+// ── 신호 감지 위치 오버레이 ──
+function updateScanOverlay(src, hotspot) {
+    const box = document.getElementById('tl-box');
+    if (!hotspot || !tlOn) {
+        box.style.display = 'none';
+        return;
+    }
+
+    const area = document.getElementById('camera-area');
+    const areaW = area.offsetWidth, areaH = area.offsetHeight;
+    const sw = srcW(src), sh = srcH(src);
+
+    // object-fit: cover 좌표 변환
+    const scaleX = areaW / sw, scaleY = areaH / sh;
+    const scale = Math.max(scaleX, scaleY);
+    const renderW = sw * scale, renderH = sh * scale;
+    const offsetX = (areaW - renderW) / 2;
+    const offsetY = (areaH - renderH) / 2;
+
+    const boxW = hotspot.cellW * scale;
+    const boxH = hotspot.cellH * scale;
+    const boxX = offsetX + hotspot.cx * scale - boxW / 2;
+    const boxY = offsetY + hotspot.cy * scale - boxH / 2;
+
+    box.style.display = 'block';
+    box.style.left   = boxX + 'px';
+    box.style.top    = boxY + 'px';
+    box.style.width  = boxW + 'px';
+    box.style.height = boxH + 'px';
+
+    box.classList.remove('green-tl', 'red-tl');
+    if (signalColor === 'green') box.classList.add('green-tl');
+    else if (signalColor === 'red') box.classList.add('red-tl');
+
+    const label = document.getElementById('tl-box-label');
+    label.textContent = signalColor === 'green' ? '🟢 초록'
+                      : signalColor === 'red'   ? '🔴 빨강'
+                      : '탐색중';
+}
+
+
+// ════════════════════════════════════════════════
+//  ③ OCR (Tesseract.js) — 변경 없음 + 유효기간 추가
+// ════════════════════════════════════════════════
+async function runOCR(src) {
+    if (!ocrWorker || isOcrRunning || !roiRect) return;
+    isOcrRunning = true;
+
+    try {
+        const sw = srcW(src), sh = srcH(src);
+        const rx = Math.floor(roiRect.x * sw);
+        const ry = Math.floor(roiRect.y * sh);
+        const rw = Math.floor(roiRect.w * sw);
+        const rh = Math.floor(roiRect.h * sh);
+        if (rw < 10 || rh < 10) return;
+
+        ocrCanvas.width  = rw * 2;
+        ocrCanvas.height = rh * 2;
+        ocrCtx.imageSmoothingEnabled = false;
+        ocrCtx.drawImage(src, rx, ry, rw, rh, 0, 0, rw * 2, rh * 2);
+
+        const imgData = ocrCtx.getImageData(0, 0, rw * 2, rh * 2);
+        binarize(imgData);
+        ocrCtx.putImageData(imgData, 0, 0);
+
+        const { data: { text } } = await ocrWorker.recognize(ocrCanvas);
+        const nums = text.match(/\d+/g);
+
+        if (nums?.length > 0) {
+            const v = parseInt(nums[0]);
+            if (v >= 1 && v <= 99) {
+                ocrTime = v;
+                ocrTimeStamp = Date.now();
+            }
+        }
+
+        if (debugOn) {
+            $('d-ocr').textContent = ocrTime !== null
+                ? ocrTime + '초 (' + Math.round((Date.now() - ocrTimeStamp) / 1000) + '초전)'
+                : '미감지 (' + text.trim() + ')';
+        }
+    } catch (e) {
+        console.warn('OCR error:', e);
+    } finally {
+        isOcrRunning = false;
+    }
+}
+
+function binarize(imgData) {
+    const d = imgData.data;
+    for (let i = 0; i < d.length; i += 4) {
+        const gray = d[i] * 0.299 + d[i+1] * 0.587 + d[i+2] * 0.114;
+        const bin  = gray > 128 ? 255 : 0;
+        d[i] = d[i+1] = d[i+2] = bin;
+    }
+}
+
+// OCR 잔여시간 보정: 마지막 읽은 값에서 경과 시간 차감
+function getEffectiveTime() {
+    if (ocrTime === null || ocrTimeStamp === 0) return null;
+    const elapsed = (Date.now() - ocrTimeStamp) / 1000;
+    if (elapsed > OCR_STALE_MS / 1000) return null;  // 유효기간 초과
+    return Math.max(0, Math.round(ocrTime - elapsed));
+}
+
+
+// ════════════════════════════════════════════════
+//  ④ 점멸 감지 (v5.2: 신호 핫스팟 기반)
+// ════════════════════════════════════════════════
+function detectBlink(src) {
+    // 초록불이 확인되었을 때만 점멸 감지
+    if (signalColor !== "green" || !signalHotspot) {
+        blinkBuf = [];
+        isBlinking = false;
+        if (debugOn) $('d-blink').textContent = signalColor === "green" ? '대기' : '비활성';
+        return;
+    }
+
+    // 감지된 신호 핫스팟 중심 영역에서 밝기 측정
+    const sw = srcW(src), sh = srcH(src);
+    const cx = Math.floor(signalHotspot.cx);
+    const cy = Math.floor(signalHotspot.cy);
+    const size = Math.max(20, Math.min(50, Math.floor(signalHotspot.cellW)));
+
+    blinkCanvas.width  = size;
+    blinkCanvas.height = size;
+
+    const sx = Math.max(0, cx - Math.floor(size / 2));
+    const sy = Math.max(0, cy - Math.floor(size / 2));
+    const drawW = Math.min(size, sw - sx);
+    const drawH = Math.min(size, sh - sy);
+
+    blinkCtx.drawImage(src, sx, sy, drawW, drawH, 0, 0, size, size);
+
+    const d = blinkCtx.getImageData(0, 0, size, size).data;
+    let bright = 0;
+    const pixels = size * size;
+    for (let i = 0; i < d.length; i += 4) {
+        bright += d[i] * 0.299 + d[i+1] * 0.587 + d[i+2] * 0.114;
+    }
+    bright /= pixels;
+
+    blinkBuf.push(bright);
+    if (blinkBuf.length > BLINK_WIN) blinkBuf.shift();
+
+    if (blinkBuf.length === BLINK_WIN) {
+        const mean = blinkBuf.reduce((a, b) => a + b) / BLINK_WIN;
+        const variance = blinkBuf.reduce((s, v) => s + (v - mean) ** 2, 0) / BLINK_WIN;
+        isBlinking = variance > BLINK_VAR_THRESH;
+    }
+
+    if (debugOn) $('d-blink').textContent = isBlinking ? '⚡ 점멸 감지!' : '안정';
+}
+
+
+// ════════════════════════════════════════════════
+//  ⑤ 횡단 거리 추정 — 변경 없음
+// ════════════════════════════════════════════════
+function estimateCrosswalkWidth(src) {
+    if (!["crosswalk", "blinker greenlight", "blinker redlight"].includes(sceneState) &&
+        sceneState !== "crosswalk") return;
+
+    const sw = srcW(src), sh = srcH(src);
+    const scanH = Math.floor(sh * 0.25);
+    const scanY = sh - scanH;
+
+    cwCanvas.width  = sw;
+    cwCanvas.height = scanH;
+    cwCtx.drawImage(src, 0, scanY, sw, scanH, 0, 0, sw, scanH);
+
+    const d = cwCtx.getImageData(0, 0, sw, scanH).data;
+    const scanX = Math.floor(sw / 2);
+
+    let stripeCount = 0;
+    let prevWhite = false;
+    for (let y = 0; y < scanH; y++) {
+        const idx = (y * sw + scanX) * 4;
+        const bright = d[idx] * 0.299 + d[idx+1] * 0.587 + d[idx+2] * 0.114;
+        const isWhite = bright > 175;
+        if (isWhite && !prevWhite) stripeCount++;
+        prevWhite = isWhite;
+    }
+
+    if (stripeCount >= 2) {
+        const est = stripeCount * STRIPE_M;
+        estimatedWidth = estimatedWidth
+            ? estimatedWidth * 0.75 + est * 0.25
+            : est;
+    }
+
+    if (debugOn) $('d-width').textContent = estimatedWidth ? estimatedWidth.toFixed(1) + 'm' : '-';
+}
+
+
+// ════════════════════════════════════════════════
+//  GPS 센서 — 변경 없음
+// ════════════════════════════════════════════════
+function initSensors() {
+    if ('geolocation' in navigator) {
+        navigator.geolocation.watchPosition(
+            pos => {
+                const now = Date.now();
+                if (lastGpsCoords && lastGpsMs) {
+                    const dt = (now - lastGpsMs) / 1000;
+                    if (dt >= 1) {
+                        const dist = haversine(lastGpsCoords, pos.coords);
+                        const spd  = dist / dt;
+                        if (spd > 0.3 && spd < 3.5) {
+                            speedHistory.push(spd);
+                            if (speedHistory.length > 6) speedHistory.shift();
+                            walkSpeed = speedHistory.reduce((a, b) => a + b) / speedHistory.length;
+                        }
+                    }
+                }
+                lastGpsCoords = pos.coords;
+                lastGpsMs     = now;
+                if (debugOn) $('d-speed').textContent = walkSpeed.toFixed(2) + 'm/s (GPS)';
+            },
+            () => { if (debugOn) $('d-speed').textContent = walkSpeed.toFixed(2) + 'm/s (기본값)'; },
+            { enableHighAccuracy: true, maximumAge: 500 }
+        );
+    }
+}
+
+function haversine(c1, c2) {
+    const R = 6371000;
+    const φ1 = c1.latitude  * Math.PI / 180;
+    const φ2 = c2.latitude  * Math.PI / 180;
+    const Δφ = (c2.latitude  - c1.latitude)  * Math.PI / 180;
+    const Δλ = (c2.longitude - c1.longitude) * Math.PI / 180;
+    const a  = Math.sin(Δφ/2)**2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+
+// ════════════════════════════════════════════════
+//  ⑥ 안전 판단 엔진 (v5.0: 장면 + 신호 분리)
+// ════════════════════════════════════════════════
+function buildDecision() {
+    const infoArea = document.getElementById('info-area');
+    infoArea.classList.remove('danger', 'warn', 'blinking');
+
+    const crossW    = estimatedWidth || 8;
+    const crossT    = crossW / walkSpeed;
+    const remaining = getEffectiveTime();
+
+    // 통계 갱신
+    $('s-time').textContent  = remaining !== null ? remaining + '초' : '--';
+    $('s-cross').textContent = crossT.toFixed(1) + '초';
+    $('s-speed').textContent = walkSpeed.toFixed(1) + 'm/s';
+    $('s-width').textContent = crossW.toFixed(0) + 'm';
+    if (debugOn) $('d-crosst').textContent = crossT.toFixed(1) + 's';
+
+    // 하이라이트 초기화
+    ['sc-time','sc-cross','sc-speed','sc-width'].forEach(id => {
+        document.getElementById(id).classList.remove('highlight', 'warn-val', 'danger-val');
+    });
+
+    let mainText = "";
+    let subText  = "";
+    let speakInterval = SPEAK_NORMAL_WAIT;
+
+    // ── 장면이 횡단보도(또는 주변)일 때 ──
+    const isNearCrosswalk = (
+        sceneState === "crosswalk" ||
+        sceneState === "surround crosswalk" ||
+        sceneState === "blinker greenlight" ||
+        sceneState === "blinker redlight"
+    );
+
+    if (isNearCrosswalk) {
+
+        if (signalColor === "red") {
+            // ── 빨간불 ──
+            mainText = "🔴 정지하세요";
+            subText  = "빨간 신호입니다. 신호가 바뀔 때까지 기다리세요.";
+            infoArea.classList.add('danger');
+            document.getElementById('sc-time').classList.add('danger-val');
+            speakInterval = SPEAK_DANGER_WAIT;
+            if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+
+        } else if (signalColor === "green") {
+            // ── 초록불 ──
+            if (isBlinking) {
+                mainText = "⚠️ 신호가 곧 바뀝니다";
+                subText  = remaining
+                    ? remaining + '초 남음 — 시간이 촉박합니다. 다음 신호를 기다리세요.'
+                    : "점멸 감지 — 건너지 마세요";
+                infoArea.classList.add('warn', 'blinking');
+                document.getElementById('sc-time').classList.add('warn-val');
+                speakInterval = 4000;
+                if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+
+            } else if (remaining !== null) {
+                if (remaining >= crossT + SAFETY_BUFFER) {
+                    mainText = "✅ 건너세요";
+                    subText  = remaining + '초 남음 · 예상 횡단 ' + crossT.toFixed(0) + '초 · 충분히 안전합니다';
+                    document.getElementById('sc-time').classList.add('highlight');
+                } else if (remaining >= crossT) {
+                    mainText = "⚠️ 서두르세요";
+                    subText  = remaining + '초 남음 · 예상 횡단 ' + crossT.toFixed(0) + '초 · 빠르게 건너야 합니다';
+                    infoArea.classList.add('warn');
+                    document.getElementById('sc-time').classList.add('warn-val');
+                    speakInterval = 4000;
+                } else {
+                    mainText = "🛑 다음 신호를 기다리세요";
+                    subText  = remaining + '초 남음 · 예상 횡단 ' + crossT.toFixed(0) + '초 · 시간이 부족합니다';
+                    infoArea.classList.add('danger');
+                    document.getElementById('sc-time').classList.add('danger-val');
+                    speakInterval = SPEAK_DANGER_WAIT;
+                }
+            } else {
+                mainText = "🟢 초록불입니다";
+                subText  = "안전하게 건너세요";
+                document.getElementById('sc-time').classList.add('highlight');
+            }
+
+        } else {
+            // ── 신호등 미감지 ──
+            if (sceneState === "crosswalk") {
+                mainText = "🚶 횡단보도 위입니다";
+                subText  = estimatedWidth
+                    ? '횡단 거리 약 ' + estimatedWidth.toFixed(0) + 'm · 신호등을 탐색 중...'
+                    : "신호등을 탐색하고 있습니다...";
+            } else {
+                mainText = "🛤 횡단보도 주변입니다";
+                subText  = "신호등을 탐색하고 있습니다...";
+            }
+        }
+
+    } else if (sceneState === "background") {
+        mainText = "📍 일반 보도";
+        subText  = "횡단보도가 감지되지 않습니다";
+
+    } else if (sceneState === "low_confidence") {
+        mainText = "🔍 분석 중...";
+        subText  = "카메라를 전방으로 향하세요";
+
+    } else {
+        return;  // unknown 상태 → UI 갱신 안 함
+    }
+
+    setMsg(mainText, subText);
+
+    // 음성 안내
+    const now = Date.now();
+    if (mainText !== lastMsg || now - lastSpeakMs > speakInterval) {
+        const clean = mainText.replace(/[🔴🟢✅⚠️🛑🚶🛤🔍📍]/gu, '').trim();
+        speak(clean + ". " + subText);
+        lastMsg     = mainText;
+        lastSpeakMs = now;
+    }
+}
+
+
+// ════════════════════════════════════════════════
+//  UI HELPERS
+// ════════════════════════════════════════════════
+function setMsg(main, sub) {
+    document.getElementById('main-msg').textContent = main;
+    document.getElementById('sub-msg').textContent  = sub || "";
+}
+
+function bar(pct) {
+    document.getElementById('loading-bar').style.width = pct + '%';
+}
+
+let lastSpeakText = "";
+function speak(text) {
+    if (!window.speechSynthesis || !text.trim()) return;
+    lastSpeakText = text;
+    if (window.speechSynthesis.speaking) window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'ko-KR';
+    u.rate = 1.1;
+    u.pitch = 1.0;
+    window.speechSynthesis.speak(u);
+}
+
+function repeatSpeak() { if (lastSpeakText) speak(lastSpeakText); }
+
+function toggleDebug() {
+    debugOn = !debugOn;
+    document.getElementById('debug-panel').style.display = debugOn ? 'block' : 'none';
+    document.getElementById('btn-debug').classList.toggle('active', debugOn);
+}
+
+function toggleROI() {
+    roiOn = !roiOn;
+    document.getElementById('roi-overlay').style.display = roiOn ? 'block' : 'none';
+    document.getElementById('btn-roi').classList.toggle('active', roiOn);
+}
+
+function toggleTL() {
+    tlOn = !tlOn;
+    document.getElementById('btn-tl').classList.toggle('active', tlOn);
+    if (!tlOn) document.getElementById('tl-box').style.display = 'none';
+}
+
+function setDefaultROI(sw, sh) {
+    roiRect = { x: 0.25, y: 0.04, w: 0.50, h: 0.38 };
+    updateROI();
+}
+
+function updateROI() {
+    if (!roiRect) return;
+    const area = document.getElementById('camera-area');
+    const dw = area.offsetWidth, dh = area.offsetHeight;
+    const roi = document.getElementById('roi-overlay');
+    roi.style.left   = (roiRect.x * dw) + 'px';
+    roi.style.top    = (roiRect.y * dh) + 'px';
+    roi.style.width  = (roiRect.w * dw) + 'px';
+    roi.style.height = (roiRect.h * dh) + 'px';
+}
+
+window.addEventListener('resize', updateROI);
+
+
+// ════════════════════════════════════════════════
+//  UTILS
+// ════════════════════════════════════════════════
+function srcW(src) { return src instanceof HTMLVideoElement ? src.videoWidth  : src.width;  }
+function srcH(src) { return src instanceof HTMLVideoElement ? src.videoHeight : src.height; }
+function $(id)     { return document.getElementById(id); }
+
+// v5.1: 최빈값 투표 함수 — 배열에서 가장 많이 등장한 값 반환
+function majorityVote(arr) {
+    if (arr.length === 0) return "unknown";
+    const counts = {};
+    for (const v of arr) {
+        counts[v] = (counts[v] || 0) + 1;
+    }
+    let best = arr[0], bestCount = 0;
+    for (const [key, count] of Object.entries(counts)) {
+        if (count > bestCount) { best = key; bestCount = count; }
+    }
+    return best;
+}
+</script>
+</body>
+</html>
